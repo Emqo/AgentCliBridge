@@ -21,6 +21,20 @@ const patterns: [RegExp, (m: RegExpMatchArray) => IntentResult][] = [
     () => ({ type: "clear_session" })],
 ];
 
+/** Loose keywords that hint the message *might* be an intent — worth a Claude check */
+const hintPatterns = [
+  /提醒|醒我|remind/i,
+  /任务|待办|todo|task/i,
+  /记住|记下|记得|remember/i,
+  /忘记|忘掉|forget/i,
+  /新会话|新对话|new\s*session|clear\s*session/i,
+  /\d+\s*(?:分钟|min|m|小时|hour|h)\s*(?:后|later)/i,
+];
+
+function mightBeIntent(text: string): boolean {
+  return hintPatterns.some(re => re.test(text));
+}
+
 export function regexDetect(text: string): IntentResult {
   for (const [re, fn] of patterns) {
     const m = text.match(re);
@@ -38,13 +52,20 @@ export function claudeDetect(text: string, rotator: EndpointRotator): Promise<In
     const env: Record<string, string> = { ...process.env as Record<string, string> };
     if (ep.api_key) env.ANTHROPIC_API_KEY = ep.api_key;
     if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
-    const prompt = `Classify the user's intent. Output ONLY one JSON line, no other text:
-{"type":"reminder","minutes":5,"description":"check server"}
-{"type":"task","description":"buy milk"}
-{"type":"memory","description":"I like TypeScript"}
-{"type":"none"}
+    const prompt = `You are an intent classifier. Classify the user message into exactly ONE of these types. Output ONLY a single JSON object, nothing else.
 
-User: ${text.slice(0, 500)}`;
+Types:
+- "reminder": user wants to be reminded later. Extract minutes and description. Example: {"type":"reminder","minutes":5,"description":"check server"}
+- "task": user wants to add a task/todo. Extract description. Example: {"type":"task","description":"buy milk"}
+- "memory": user wants you to remember something. Extract description. Example: {"type":"memory","description":"I like TypeScript"}
+- "none": normal conversation, not an intent. Output: {"type":"none"}
+
+Rules:
+- Output ONLY one JSON object on a single line
+- Do NOT output any explanation or extra text
+- If unsure, output {"type":"none"}
+
+User message: ${text.slice(0, 500)}`;
     const args = ["-p", prompt, "--output-format", "stream-json", "--max-turns", "1", "--max-budget-usd", "0.005"];
     if (ep.model) args.push("--model", ep.model);
     const child = spawn("claude", args, { env, stdio: ["pipe", "pipe", "pipe"] });
@@ -75,6 +96,9 @@ User: ${text.slice(0, 500)}`;
 export async function detectIntent(text: string, rotator: EndpointRotator, config?: IntentConfig): Promise<IntentResult> {
   const r = regexDetect(text);
   if (r.type !== "none") return r;
-  if (config?.use_claude_fallback !== false) return claudeDetect(text, rotator);
+  // Only call Claude fallback if text contains hint keywords (saves cost)
+  if (config?.use_claude_fallback !== false && mightBeIntent(text)) {
+    return claudeDetect(text, rotator);
+  }
   return { type: "none" };
 }

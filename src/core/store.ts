@@ -114,8 +114,14 @@ export class Store {
   }
 
   // --- memories ---
-  addMemory(userId: string, content: string, source = "manual"): void {
+  addMemory(userId: string, content: string, source = "manual"): boolean {
+    // Dedup: skip if identical content already exists for this user
+    const existing = this.db.prepare(
+      "SELECT id FROM memories WHERE user_id = ? AND content = ? LIMIT 1"
+    ).get(userId, content);
+    if (existing) return false;
     this.db.prepare("INSERT INTO memories (user_id, content, source, created_at) VALUES (?, ?, ?, ?)").run(userId, content, source, Date.now());
+    return true;
   }
 
   getMemories(userId: string): { id: number; content: string; source: string; created_at: number }[] {

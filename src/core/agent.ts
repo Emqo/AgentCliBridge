@@ -226,6 +226,7 @@ export class AgentEngine {
     const child = spawn("claude", args, { env, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end();
     let result = "";
+    let cost = 0;
     let buffer = "";
     child.stdout.on("data", (data: Buffer) => {
       buffer += data.toString();
@@ -235,15 +236,23 @@ export class AgentEngine {
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line);
-          if (msg.type === "result" && msg.result) result = msg.result;
+          if (msg.type === "result") {
+            if (msg.result) result = msg.result;
+            if (msg.total_cost_usd) cost = msg.total_cost_usd;
+          }
         } catch {}
       }
     });
     child.on("close", () => {
+      if (cost > 0) {
+        this.store.recordUsage(userId, "auto-summary", cost);
+        console.log(`[agent] auto-summary cost=$${cost.toFixed(4)} for ${userId}`);
+      }
       if (result && !result.includes("NONE")) {
-        this.store.addMemory(userId, result.trim(), "auto");
+        const saved = this.store.addMemory(userId, result.trim(), "auto");
         this.store.trimMemories(userId, this.config.agent.memory?.max_memories || 50);
-        console.log(`[agent] auto-summary saved for ${userId}`);
+        if (saved) console.log(`[agent] auto-summary saved for ${userId}`);
+        else console.log(`[agent] auto-summary skipped (duplicate) for ${userId}`);
       }
     });
   }
