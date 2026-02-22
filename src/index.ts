@@ -9,7 +9,9 @@ import { DiscordAdapter } from "./adapters/discord.js";
 import { Adapter } from "./adapters/base.js";
 
 async function main() {
-  let config = loadConfig();
+  const _cfgIdx = process.argv.indexOf("--config");
+  const _cfgPath = _cfgIdx !== -1 ? process.argv[_cfgIdx + 1] : undefined;
+  let config = loadConfig(_cfgPath);
   const store = new Store();
   const engine = new AgentEngine(config, store);
   const adapters: Adapter[] = [];
@@ -40,7 +42,7 @@ async function main() {
 
   // Hot reload config.yaml
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
-  watch("config.yaml", () => {
+  watch(_cfgPath || "config.yaml", () => {
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => {
       try {
@@ -60,6 +62,15 @@ async function main() {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  process.on("SIGHUP", () => {
+    try {
+      config = reloadConfig();
+      engine.reloadConfig(config);
+      console.log("[claudebridge] config reloaded (SIGHUP)");
+    } catch (err) {
+      console.error("[claudebridge] config reload failed:", err);
+    }
+  });
 }
 
 main().catch((err) => {
