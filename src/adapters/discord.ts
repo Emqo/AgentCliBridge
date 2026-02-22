@@ -82,7 +82,10 @@ export class DiscordAdapter implements Adapter {
         return;
       }
       if (text === "!model") {
-        await msg.reply(`Model: ${this.engine.getModel()}\nAPI keys: ${this.engine.getKeyCount()}`);
+        const eps = this.engine.getEndpoints();
+        const out = `Endpoints (${eps.length}):\n` +
+          eps.map((e) => `• ${e.name}: ${e.model || "default"}`).join("\n");
+        await msg.reply(out);
         return;
       }
       if (text === "!reload") {

@@ -5,7 +5,7 @@ import { Config } from "./config.js";
 import { Store } from "./store.js";
 import { UserLock } from "./lock.js";
 import { AccessControl } from "./permissions.js";
-import { KeyRotator } from "./keys.js";
+import { EndpointRotator, Endpoint } from "./keys.js";
 
 export interface AgentResponse {
   text: string;
@@ -17,7 +17,7 @@ export type StreamCallback = (chunk: string, full: string) => void | Promise<voi
 
 export class AgentEngine {
   private lock: UserLock;
-  private keys: KeyRotator;
+  private rotator: EndpointRotator;
   access: AccessControl;
 
   constructor(
@@ -31,21 +31,21 @@ export class AgentEngine {
       config.access.allowed_users,
       config.access.allowed_groups
     );
-    this.keys = new KeyRotator(config.api.api_keys);
+    this.rotator = new EndpointRotator(config.endpoints);
   }
 
   reloadConfig(config: Config) {
     this.config = config;
     this.access.reload(config.access.allowed_users, config.access.allowed_groups);
-    this.keys.reload(config.api.api_keys);
+    this.rotator.reload(config.endpoints);
   }
 
-  getModel(): string {
-    return this.config.api.model || "default";
+  getEndpoints(): { name: string; model: string }[] {
+    return this.rotator.list();
   }
 
-  getKeyCount(): number {
-    return this.keys.count;
+  getEndpointCount(): number {
+    return this.rotator.count;
   }
 
   private getWorkDir(userId: string): string {
@@ -57,14 +57,14 @@ export class AgentEngine {
     return dir;
   }
 
-  private buildEnv(apiKey: string): Record<string, string> {
+  private buildEnv(ep: Endpoint): Record<string, string> {
     const env: Record<string, string> = { ...process.env as Record<string, string> };
-    env.ANTHROPIC_API_KEY = apiKey;
-    if (this.config.api.base_url) env.ANTHROPIC_BASE_URL = this.config.api.base_url;
+    env.ANTHROPIC_API_KEY = ep.api_key;
+    if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
     return env;
   }
 
-  private buildOpts(userId: string, apiKey: string) {
+  private buildOpts(userId: string, ep: Endpoint) {
     const existingSession = this.store.getSession(userId);
     const ac = this.config.agent;
     const opts: Record<string, unknown> = {
@@ -73,9 +73,9 @@ export class AgentEngine {
       maxTurns: ac.max_turns,
       maxBudgetUsd: ac.max_budget_usd,
       cwd: this.getWorkDir(userId),
-      env: this.buildEnv(apiKey),
+      env: this.buildEnv(ep),
     };
-    if (this.config.api.model) opts.model = this.config.api.model;
+    if (ep.model) opts.model = ep.model;
     if (ac.system_prompt) opts.systemPrompt = ac.system_prompt;
     if (existingSession) opts.resume = existingSession;
     return { opts, existingSession };
@@ -109,21 +109,21 @@ export class AgentEngine {
     platform: string,
     onChunk?: StreamCallback
   ): Promise<AgentResponse> {
-    const maxRetries = Math.min(this.keys.count, 3);
+    const maxRetries = Math.min(this.rotator.count, 3);
     let lastErr: any;
     for (let i = 0; i < maxRetries; i++) {
-      const key = this.keys.next();
+      const ep = this.rotator.next();
       try {
-        return await this._execute(userId, prompt, platform, key, onChunk);
+        return await this._execute(userId, prompt, platform, ep, onChunk);
       } catch (err: any) {
         lastErr = err;
         const status = err?.status || err?.statusCode;
         if (status === 429 || status === 401 || status === 529) {
-          console.warn(`[agent] key ${key.slice(0, 8)}... failed (${status}), rotating`);
-          this.keys.markFailed(key);
+          console.warn(`[agent] endpoint ${ep.name} failed (${status}), rotating`);
+          this.rotator.markFailed(ep);
           continue;
         }
-        throw err; // non-retryable
+        throw err;
       }
     }
     throw lastErr;
@@ -133,10 +133,10 @@ export class AgentEngine {
     userId: string,
     prompt: string,
     platform: string,
-    apiKey: string,
+    ep: Endpoint,
     onChunk?: StreamCallback
   ): Promise<AgentResponse> {
-    const { opts, existingSession } = this.buildOpts(userId, apiKey);
+    const { opts, existingSession } = this.buildOpts(userId, ep);
     let sessionId = existingSession || "";
     let fullText = "";
     let cost = 0;

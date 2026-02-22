@@ -75,7 +75,10 @@ export class TelegramAdapter implements Adapter {
     });
 
     this.bot.command("model", async (ctx) => {
-      await ctx.reply(`Model: ${this.engine.getModel()}\nAPI keys: ${this.engine.getKeyCount()}`);
+      const eps = this.engine.getEndpoints();
+      const text = `Endpoints (${eps.length}):\n` +
+        eps.map((e) => `• ${e.name}: ${e.model || "default"}`).join("\n");
+      await ctx.reply(text);
     });
 
     this.bot.command("reload", async (ctx) => {

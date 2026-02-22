@@ -1,13 +1,7 @@
 import { readFileSync } from "fs";
 import { parse } from "yaml";
 import "dotenv/config";
-
-export interface ApiConfig {
-  base_url: string;
-  api_key: string;
-  api_keys: string[];   // multiple keys for rotation
-  model: string;
-}
+import { Endpoint } from "./keys.js";
 
 export interface AgentConfig {
   allowed_tools: string[];
@@ -46,7 +40,7 @@ export interface RedisConfig {
 }
 
 export interface Config {
-  api: ApiConfig;
+  endpoints: Endpoint[];
   agent: AgentConfig;
   workspace: WorkspaceConfig;
   access: AccessConfig;
@@ -58,23 +52,31 @@ let _configPath = "config.yaml";
 
 export function loadConfig(path?: string): Config {
   if (path) _configPath = path;
-  const raw = parse(readFileSync(_configPath, "utf-8"));
-  const c = raw as Config;
-  c.api.api_key = c.api.api_key || process.env.ANTHROPIC_API_KEY || "";
-  c.api.api_keys = c.api.api_keys || [];
-  // merge single key into keys array if not already present
-  if (c.api.api_key && !c.api.api_keys.includes(c.api.api_key)) {
-    c.api.api_keys.unshift(c.api.api_key);
+  const raw = parse(readFileSync(_configPath, "utf-8")) as any;
+  const c: Config = {
+    endpoints: raw.endpoints || [],
+    agent: raw.agent,
+    workspace: raw.workspace,
+    access: raw.access || { allowed_users: [], allowed_groups: [] },
+    redis: raw.redis || { enabled: false, url: "" },
+    platforms: raw.platforms,
+  };
+  // defaults for each endpoint
+  for (const ep of c.endpoints) {
+    ep.name = ep.name || "default";
+    ep.base_url = ep.base_url || "";
+    ep.api_key = ep.api_key || "";
+    ep.model = ep.model || "";
   }
-  // env: comma-separated ANTHROPIC_API_KEYS
-  const envKeys = process.env.ANTHROPIC_API_KEYS?.split(",").map(k => k.trim()).filter(Boolean) || [];
-  for (const k of envKeys) {
-    if (!c.api.api_keys.includes(k)) c.api.api_keys.push(k);
+  // env fallback: single endpoint from env vars
+  if (!c.endpoints.length && process.env.ANTHROPIC_API_KEY) {
+    c.endpoints.push({
+      name: "env-default",
+      base_url: process.env.ANTHROPIC_BASE_URL || "",
+      api_key: process.env.ANTHROPIC_API_KEY,
+      model: process.env.ANTHROPIC_MODEL || "",
+    });
   }
-  c.api.base_url = c.api.base_url || process.env.ANTHROPIC_BASE_URL || "";
-  c.api.model = c.api.model || process.env.ANTHROPIC_MODEL || "";
-  c.access = c.access || { allowed_users: [], allowed_groups: [] };
-  c.redis = c.redis || { enabled: false, url: "" };
   c.redis.url = c.redis.url || process.env.REDIS_URL || "";
   c.platforms.telegram.token =
     c.platforms.telegram.token || process.env.TELEGRAM_BOT_TOKEN || "";
