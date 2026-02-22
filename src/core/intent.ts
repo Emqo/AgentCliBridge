@@ -32,9 +32,11 @@ export function regexDetect(text: string): IntentResult {
 export function claudeDetect(text: string, rotator: EndpointRotator): Promise<IntentResult> {
   return new Promise(resolve => {
     const timeout = setTimeout(() => resolve({ type: "none" }), 15000);
-    const ep = rotator.next();
+    const ep = rotator.count
+      ? rotator.next()
+      : { name: "cli-default", api_key: "", base_url: "", model: "" };
     const env: Record<string, string> = { ...process.env as Record<string, string> };
-    env.ANTHROPIC_API_KEY = ep.api_key;
+    if (ep.api_key) env.ANTHROPIC_API_KEY = ep.api_key;
     if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
     const prompt = `Classify the user's intent. Output ONLY one JSON line, no other text:
 {"type":"reminder","minutes":5,"description":"check server"}
