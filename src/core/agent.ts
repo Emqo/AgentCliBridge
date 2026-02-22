@@ -225,9 +225,11 @@ export class AgentEngine {
     if (ep.model) args.push("--model", ep.model);
     const child = spawn("claude", args, { env, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end();
+    console.log(`[agent] auto-summary spawned pid=${child.pid} for ${userId}`);
     let result = "";
     let cost = 0;
     let buffer = "";
+    let stderr = "";
     child.stdout.on("data", (data: Buffer) => {
       buffer += data.toString();
       const lines = buffer.split("\n");
@@ -243,7 +245,11 @@ export class AgentEngine {
         } catch {}
       }
     });
-    child.on("close", () => {
+    child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        console.warn(`[agent] auto-summary failed code=${code} stderr=${stderr.slice(0, 200)} for ${userId}`);
+      }
       if (cost > 0) {
         this.store.recordUsage(userId, "auto-summary", cost);
         console.log(`[agent] auto-summary cost=$${cost.toFixed(4)} for ${userId}`);
@@ -253,7 +259,10 @@ export class AgentEngine {
         this.store.trimMemories(userId, this.config.agent.memory?.max_memories || 50);
         if (saved) console.log(`[agent] auto-summary saved for ${userId}`);
         else console.log(`[agent] auto-summary skipped (duplicate) for ${userId}`);
+      } else {
+        console.log(`[agent] auto-summary result=NONE for ${userId}`);
       }
     });
+    child.on("error", (err) => { console.warn(`[agent] auto-summary spawn error: ${err.message}`); });
   }
 }

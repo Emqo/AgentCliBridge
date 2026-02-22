@@ -13,7 +13,7 @@ const patterns: [RegExp, (m: RegExpMatchArray) => IntentResult][] = [
     m => ({ type: "reminder", minutes: +m[1], description: m[2].trim() })],
   [/^(?:添加|加个?|创建|add|create)\s*(?:一个)?(?:任务|task)[：:\s]*(.+)/i,
     m => ({ type: "task", description: m[1].trim() })],
-  [/^(?:记住|记下|remember)\s*(?:that|this)?[：:\s]*(.+)/i,
+  [/^(?:记住|记下|记忆|帮我记|remember)\s*(?:that|this)?[：:\s]*(.+)/i,
     m => ({ type: "memory", description: m[1].trim() })],
   [/^(?:忘记所有|清除记忆|forget\s*all|clear\s*memo)/i,
     () => ({ type: "forget" })],
@@ -25,7 +25,7 @@ const patterns: [RegExp, (m: RegExpMatchArray) => IntentResult][] = [
 const hintPatterns = [
   /提醒|醒我|remind/i,
   /任务|待办|todo|task/i,
-  /记住|记下|记得|remember/i,
+  /记住|记下|记得|记忆|帮我记|remember/i,
   /忘记|忘掉|forget/i,
   /新会话|新对话|new\s*session|clear\s*session/i,
   /\d+\s*(?:分钟|min|m|小时|hour|h)\s*(?:后|later)/i,
