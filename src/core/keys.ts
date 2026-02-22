@@ -14,7 +14,6 @@ export class EndpointRotator {
 
   constructor(endpoints: Endpoint[]) {
     this.endpoints = endpoints.filter(e => e.api_key);
-    if (!this.endpoints.length) throw new Error("No endpoints configured");
   }
 
   next(): Endpoint {

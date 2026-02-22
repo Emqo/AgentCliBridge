@@ -1,8 +1,10 @@
-endpoints:
-  - name: "default"
-    base_url: ""
-    api_key: "sk-your-api-key"
-    model: "claude-sonnet-4-20250514"
+# Leave endpoints empty to use claude CLI's own authentication
+# 留空则直接使用 claude CLI 自身的认证配置
+endpoints: []
+#  - name: "default"
+#    base_url: ""
+#    api_key: "sk-your-api-key"
+#    model: "claude-sonnet-4-20250514"
 
 locale: en  # "zh" for Chinese
 

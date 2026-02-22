@@ -97,10 +97,12 @@ export class AgentEngine {
     onChunk?: StreamCallback,
     memoryPrompt?: string
   ): Promise<AgentResponse> {
-    const maxRetries = Math.min(this.rotator.count, 3);
+    const maxRetries = Math.max(Math.min(this.rotator.count, 3), 1);
     let lastErr: any;
     for (let i = 0; i < maxRetries; i++) {
-      const ep = this.rotator.next();
+      const ep = this.rotator.count
+        ? this.rotator.next()
+        : { name: "cli-default", api_key: "", base_url: "", model: "" };
       try {
         return await this._execute(userId, prompt, platform, ep, onChunk, memoryPrompt);
       } catch (err: any) {
@@ -139,7 +141,7 @@ export class AgentEngine {
       if (this.config.agent.max_budget_usd) args.push("--max-budget-usd", String(this.config.agent.max_budget_usd));
 
       const env: Record<string, string> = { ...process.env as Record<string, string> };
-      env.ANTHROPIC_API_KEY = ep.api_key;
+      if (ep.api_key) env.ANTHROPIC_API_KEY = ep.api_key;
       if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
 
       const child = spawn("claude", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -212,9 +214,11 @@ export class AgentEngine {
   }
 
   private _autoSummarize(userId: string, prompt: string, response: string): void {
-    const ep = this.rotator.next();
+    const ep = this.rotator.count
+      ? this.rotator.next()
+      : { name: "cli-default", api_key: "", base_url: "", model: "" };
     const env: Record<string, string> = { ...process.env as Record<string, string> };
-    env.ANTHROPIC_API_KEY = ep.api_key;
+    if (ep.api_key) env.ANTHROPIC_API_KEY = ep.api_key;
     if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
     const summaryPrompt = `Extract 1-3 key facts worth remembering about the user from this exchange. Output only bullet points, no preamble. If nothing worth remembering, output "NONE".\n\nUser: ${prompt.slice(0, 500)}\nAssistant: ${response.slice(0, 1000)}`;
     const args = ["-p", summaryPrompt, "--output-format", "stream-json", "--max-turns", "1", "--max-budget-usd", "0.05"];
