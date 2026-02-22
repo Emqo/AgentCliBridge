@@ -2,9 +2,9 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdirSync } from "fs";
 import { join } from "path";
 import { Config } from "./config.js";
-import { SessionManager } from "./session.js";
+import { Store } from "./store.js";
 import { UserLock } from "./lock.js";
-import { PermissionManager } from "./permissions.js";
+import { AccessControl } from "./permissions.js";
 
 export interface AgentResponse {
   text: string;
@@ -16,20 +16,24 @@ export type StreamCallback = (chunk: string, full: string) => void | Promise<voi
 
 export class AgentEngine {
   private lock: UserLock;
-  private perms: PermissionManager;
+  access: AccessControl;
 
   constructor(
     private config: Config,
-    private sessions: SessionManager
+    private store: Store
   ) {
     this.lock = new UserLock(
       config.redis.enabled ? config.redis.url : undefined
     );
-    this.perms = new PermissionManager(
-      config.permissions.users,
-      config.permissions.default_role,
-      config.permissions.custom_roles
+    this.access = new AccessControl(
+      config.access.allowed_users,
+      config.access.allowed_groups
     );
+  }
+
+  reloadConfig(config: Config) {
+    this.config = config;
+    this.access.reload(config.access.allowed_users, config.access.allowed_groups);
   }
 
   private getWorkDir(userId: string): string {
@@ -49,15 +53,13 @@ export class AgentEngine {
   }
 
   private buildOpts(userId: string) {
-    const existingSession = this.sessions.get(userId);
+    const existingSession = this.store.getSession(userId);
     const ac = this.config.agent;
-    const roleConfig = this.perms.getRoleConfig(userId);
-
     const opts: Record<string, unknown> = {
-      allowedTools: roleConfig.allowed_tools,
+      allowedTools: ac.allowed_tools,
       permissionMode: ac.permission_mode,
-      maxTurns: roleConfig.max_turns,
-      maxBudgetUsd: roleConfig.max_budget_usd,
+      maxTurns: ac.max_turns,
+      maxBudgetUsd: ac.max_budget_usd,
       cwd: this.getWorkDir(userId),
       env: this.buildEnv(),
     };
@@ -67,32 +69,23 @@ export class AgentEngine {
     return { opts, existingSession };
   }
 
-  getUserRole(userId: string) {
-    return this.perms.getRole(userId);
-  }
-
   isLocked(userId: string): boolean {
     return this.lock.isLocked(userId);
-  }
-
-  async run(userId: string, prompt: string, platform: string): Promise<AgentResponse> {
-    const release = await this.lock.acquire(userId);
-    try {
-      return await this._execute(userId, prompt, platform);
-    } finally {
-      release();
-    }
   }
 
   async runStream(
     userId: string,
     prompt: string,
     platform: string,
-    onChunk: StreamCallback
+    onChunk?: StreamCallback
   ): Promise<AgentResponse> {
     const release = await this.lock.acquire(userId);
     try {
-      return await this._execute(userId, prompt, platform, onChunk);
+      this.store.addHistory(userId, platform, "user", prompt);
+      const res = await this._execute(userId, prompt, platform, onChunk);
+      this.store.addHistory(userId, platform, "assistant", res.text);
+      this.store.recordUsage(userId, platform, res.cost || 0);
+      return res;
     } finally {
       release();
     }
@@ -111,11 +104,9 @@ export class AgentEngine {
 
     for await (const message of query({ prompt, options: opts as any })) {
       const msg = message as any;
-
       if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
         sessionId = msg.session_id;
       }
-
       if (msg.type === "assistant" && msg.message?.content) {
         for (const block of msg.message.content) {
           if ("text" in block) {
@@ -124,14 +115,13 @@ export class AgentEngine {
           }
         }
       }
-
       if (msg.type === "result") {
         if (msg.result) fullText = msg.result;
         if (msg.total_cost_usd) cost = msg.total_cost_usd;
       }
     }
 
-    if (sessionId) this.sessions.set(userId, sessionId, platform);
+    if (sessionId) this.store.setSession(userId, sessionId, platform);
     return { text: fullText.trim() || "(no response)", sessionId, cost };
   }
 }

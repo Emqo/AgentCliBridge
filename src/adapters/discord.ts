@@ -1,7 +1,7 @@
 import { Client, GatewayIntentBits, Message } from "discord.js";
 import { Adapter, chunkText } from "./base.js";
 import { AgentEngine } from "../core/agent.js";
-import { SessionManager } from "../core/session.js";
+import { Store } from "../core/store.js";
 import { DiscordConfig } from "../core/config.js";
 
 const EDIT_INTERVAL = 1500;
@@ -11,7 +11,7 @@ export class DiscordAdapter implements Adapter {
 
   constructor(
     private engine: AgentEngine,
-    private sessions: SessionManager,
+    private store: Store,
     private config: DiscordConfig
   ) {
     this.client = new Client({
@@ -25,32 +25,42 @@ export class DiscordAdapter implements Adapter {
     this.setup();
   }
 
-  private isAllowed(userId: string): boolean {
-    if (!this.config.allowed_users?.length) return true;
-    return this.config.allowed_users.includes(userId);
-  }
-
   private setup(): void {
     this.client.on("messageCreate", async (msg: Message) => {
       if (msg.author.bot) return;
-      if (!this.isAllowed(msg.author.id)) return;
-
-      // Only respond if mentioned or in DM
       const isDM = !msg.guild;
       const isMentioned = msg.mentions.has(this.client.user!);
       if (!isDM && !isMentioned) return;
+
+      const groupId = msg.guild ? String(msg.guild.id) : undefined;
+      if (!this.engine.access.isAllowed(msg.author.id, groupId)) return;
 
       const text = msg.content.replace(/<@!?\d+>/g, "").trim();
       if (!text) return;
 
       if (text === "!new") {
-        this.sessions.clear(msg.author.id);
-        await msg.reply("Session cleared. Starting fresh.");
+        this.store.clearSession(msg.author.id);
+        await msg.reply("Session cleared.");
+        return;
+      }
+      if (text === "!usage") {
+        const u = this.store.getUsage(msg.author.id);
+        await msg.reply(`Requests: ${u.count}\nTotal cost: $${u.total_cost.toFixed(4)}`);
+        return;
+      }
+      if (text === "!history") {
+        const rows = this.store.getHistory(msg.author.id, 5);
+        if (!rows.length) { await msg.reply("No history."); return; }
+        const out = rows.reverse().map((r) => {
+          const t = new Date(r.created_at).toLocaleString();
+          return `[${t}] ${r.role}: ${r.content.slice(0, 150)}`;
+        }).join("\n\n");
+        await msg.reply(out);
         return;
       }
 
       if (this.engine.isLocked(msg.author.id)) {
-        await msg.reply("⏳ Still processing your previous request...");
+        await msg.reply("⏳ Still processing...");
         return;
       }
 
@@ -60,9 +70,7 @@ export class DiscordAdapter implements Adapter {
 
       try {
         const res = await this.engine.runStream(
-          msg.author.id,
-          text,
-          "discord",
+          msg.author.id, text, "discord",
           async (_chunk, full) => {
             const now = Date.now();
             if (now - lastEdit < EDIT_INTERVAL) return;

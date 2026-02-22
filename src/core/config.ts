@@ -1,7 +1,6 @@
 import { readFileSync } from "fs";
 import { parse } from "yaml";
 import "dotenv/config";
-import { Role, UserRoleEntry, RoleConfig } from "./permissions.js";
 
 export interface ApiConfig {
   base_url: string;
@@ -23,24 +22,21 @@ export interface WorkspaceConfig {
   isolation: boolean;
 }
 
+export interface AccessConfig {
+  allowed_users: string[];
+  allowed_groups: string[];
+}
+
 export interface TelegramConfig {
   enabled: boolean;
   token: string;
-  allowed_users: number[];
   chunk_size: number;
 }
 
 export interface DiscordConfig {
   enabled: boolean;
   token: string;
-  allowed_users: string[];
   chunk_size: number;
-}
-
-export interface PermissionsConfig {
-  default_role: Role;
-  users: UserRoleEntry[];
-  custom_roles: Record<string, RoleConfig>;
 }
 
 export interface RedisConfig {
@@ -52,26 +48,31 @@ export interface Config {
   api: ApiConfig;
   agent: AgentConfig;
   workspace: WorkspaceConfig;
-  permissions: PermissionsConfig;
+  access: AccessConfig;
   redis: RedisConfig;
   platforms: { telegram: TelegramConfig; discord: DiscordConfig };
 }
 
-export function loadConfig(path = "config.yaml"): Config {
-  const raw = parse(readFileSync(path, "utf-8"));
+let _configPath = "config.yaml";
+
+export function loadConfig(path?: string): Config {
+  if (path) _configPath = path;
+  const raw = parse(readFileSync(_configPath, "utf-8"));
   const c = raw as Config;
-  // env overrides
   c.api.api_key = c.api.api_key || process.env.ANTHROPIC_API_KEY || "";
   c.api.base_url = c.api.base_url || process.env.ANTHROPIC_BASE_URL || "";
   c.api.model = c.api.model || process.env.ANTHROPIC_MODEL || "";
-  c.platforms.telegram.token =
-    c.platforms.telegram.token || process.env.TELEGRAM_BOT_TOKEN || "";
-  c.platforms.discord = c.platforms.discord || { enabled: false, token: "", allowed_users: [], chunk_size: 1900 };
-  c.platforms.discord.token =
-    c.platforms.discord.token || process.env.DISCORD_BOT_TOKEN || "";
-  // defaults
-  c.permissions = c.permissions || { default_role: "user", users: [], custom_roles: {} };
+  c.access = c.access || { allowed_users: [], allowed_groups: [] };
   c.redis = c.redis || { enabled: false, url: "" };
   c.redis.url = c.redis.url || process.env.REDIS_URL || "";
+  c.platforms.telegram.token =
+    c.platforms.telegram.token || process.env.TELEGRAM_BOT_TOKEN || "";
+  c.platforms.discord = c.platforms.discord || { enabled: false, token: "", chunk_size: 1900 };
+  c.platforms.discord.token =
+    c.platforms.discord.token || process.env.DISCORD_BOT_TOKEN || "";
   return c;
+}
+
+export function reloadConfig(): Config {
+  return loadConfig();
 }
