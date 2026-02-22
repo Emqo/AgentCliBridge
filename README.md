@@ -113,12 +113,13 @@ No need to type commands — just talk naturally:
 
 | Say this | Detected as |
 |----------|-------------|
-| "提醒我5分钟后检查服务器" | Reminder: 5min, check server |
-| "remind me 10 min later to deploy" | Reminder: 10min, deploy |
-| "添加任务买牛奶" | Task: buy milk |
-| "记住我喜欢TypeScript" | Memory: I like TypeScript |
-| "忘记所有" | Clear all memories |
-| "新会话" | Clear session |
+| "remind me 5 min later check server" | Reminder: 5min, check server |
+| "remind me 10 minutes later to deploy" | Reminder: 10min, deploy |
+| "add task buy groceries" | Task: buy groceries |
+| "create task: fix login bug" | Task: fix login bug |
+| "remember I prefer dark mode" | Memory: I prefer dark mode |
+| "forget all" | Clear all memories |
+| "new session" | Clear session |
 
 Regex matches first (instant, free). If no match and `use_claude_fallback` is enabled, a low-budget Claude call classifies the intent.
 
