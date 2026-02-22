@@ -167,7 +167,7 @@ export class AgentEngine {
 
       child.stdout.on("data", (data: Buffer) => {
         const chunk = data.toString();
-        console.log(`[agent] stdout chunk: ${chunk.slice(0, 100)}`);
+        console.log(`[agent] stdout chunk: ${chunk.slice(0, 200)}`);
         buffer += chunk;
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -190,6 +190,9 @@ export class AgentEngine {
             if (msg.type === "result") {
               if (msg.result) fullText = msg.result;
               if (msg.total_cost_usd) cost = msg.total_cost_usd;
+              if (msg.is_error) {
+                console.error(`[agent] claude error result: subtype=${msg.subtype} message=${JSON.stringify(msg.error_message || msg.message || "unknown").slice(0, 500)}`);
+              }
             }
           } catch {}
         }
@@ -210,10 +213,12 @@ export class AgentEngine {
           resolve({ text: fullText.trim() || "(timed out)", sessionId: newSessionId, cost });
           return;
         }
-        if (newSessionId) this.store.setSession(userId, newSessionId, platform);
         if (code === 0 || fullText.trim()) {
+          if (newSessionId) this.store.setSession(userId, newSessionId, platform);
           resolve({ text: fullText.trim() || "(no response)", sessionId: newSessionId, cost });
         } else {
+          // Don't save session on failure — stale session would lock the user in a failure loop
+          this.store.clearSession(userId);
           reject(new Error(`claude exited ${code}: ${stderr.slice(0, 500)}`));
         }
       });
