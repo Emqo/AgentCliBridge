@@ -1,6 +1,6 @@
 {
   "name": "@emqo/claudebridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bridge Claude Code Agent SDK to chat platforms (Telegram, Discord, etc.)",
   "main": "dist/index.js",
   "bin": {
