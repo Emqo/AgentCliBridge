@@ -29,19 +29,27 @@ Bridge the `claude` CLI to chat platforms (Telegram, Discord). Spawns `claude` a
 
 ## Quick Start
 
+### Global Install (npm)
+
 ```bash
-# Install
+npm i -g @emqo/claudebridge
+claudebridge init              # generate config.yaml from template
+# edit config.yaml — set endpoints, tokens, whitelist
+claudebridge start             # foreground
+claudebridge start --daemon    # background
+claudebridge status            # check if running
+claudebridge reload            # hot reload config
+claudebridge stop              # stop daemon
+```
+
+### From Source
+
+```bash
 npm install
-
-# Configure
-cp config.yaml.example config.yaml  # or edit config.yaml directly
-# Set your endpoints, tokens, and access whitelist
-
-# Build & run
+cp config.yaml.example config.yaml
 npm run build
 npm start
-
-# Or dev mode (hot reload)
+# or dev mode
 npm run dev
 ```
 
@@ -134,6 +142,7 @@ Regex matches first (instant, free). If no match and `use_claude_fallback` is en
 ## Architecture
 
 ```
+src/cli.ts                CLI entry: start/stop/status/reload/init, PID management
 src/index.ts              Entry point, config loading, hot reload
 src/core/
   agent.ts                Claude CLI subprocess spawner with retry & rotation
@@ -188,9 +197,24 @@ MIT
 
 ## 快速开始
 
+### 全局安装（npm）
+
+```bash
+npm i -g @emqo/claudebridge
+claudebridge init              # 从模板生成 config.yaml
+# 编辑 config.yaml，配置端点、Token、白名单
+claudebridge start             # 前台启动
+claudebridge start --daemon    # 后台启动
+claudebridge status            # 查看运行状态
+claudebridge reload            # 热重载配置
+claudebridge stop              # 停止进程
+```
+
+### 从源码
+
 ```bash
 npm install
-# 编辑 config.yaml，配置端点、Token、白名单
+cp config.yaml.example config.yaml
 npm run build && npm start
 # 或开发模式
 npm run dev
