@@ -194,9 +194,13 @@ export class DiscordAdapter implements Adapter {
           return;
         }
         if (intent.type === "memory" && intent.description) {
-          this.store.addMemory(msg.author.id, intent.description, "nlp");
-          await msg.reply(t(this.locale, "intent_memory_saved", { desc: intent.description }));
-          return;
+          if (/上面|之前|刚才|这个|那个|above|previous|earlier|this|that/.test(intent.description)) {
+            // Fall through to Claude conversation for context resolution
+          } else {
+            this.store.addMemory(msg.author.id, intent.description, "nlp");
+            await msg.reply(t(this.locale, "intent_memory_saved", { desc: intent.description }));
+            return;
+          }
         }
         if (intent.type === "forget") {
           this.store.clearMemories(msg.author.id);

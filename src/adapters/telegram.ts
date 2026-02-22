@@ -231,9 +231,15 @@ export class TelegramAdapter implements Adapter {
         return;
       }
       if (intent.type === "memory" && intent.description) {
-        this.store.addMemory(String(uid), intent.description, "nlp");
-        await this.reply(chatId, t(this.locale, "intent_memory_saved", { desc: intent.description }));
-        return;
+        // If description contains references to context ("上面", "this", "that", etc.),
+        // fall through to Claude conversation so it can resolve from session history
+        if (/上面|之前|刚才|这个|那个|above|previous|earlier|this|that/.test(intent.description)) {
+          // Don't intercept — let Claude handle it with full context
+        } else {
+          this.store.addMemory(String(uid), intent.description, "nlp");
+          await this.reply(chatId, t(this.locale, "intent_memory_saved", { desc: intent.description }));
+          return;
+        }
       }
       if (intent.type === "forget") {
         this.store.clearMemories(String(uid));
