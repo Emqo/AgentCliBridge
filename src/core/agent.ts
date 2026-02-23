@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from "child_process";
 import { mkdirSync } from "fs";
-import { join, resolve as pathResolve } from "path";
+import { join } from "path";
 import { Config } from "./config.js";
 import { Store } from "./store.js";
 import { UserLock } from "./lock.js";
@@ -190,7 +190,7 @@ export class AgentEngine {
       const env: Record<string, string> = { ...process.env as Record<string, string> };
       if (ep.api_key) env.ANTHROPIC_API_KEY = ep.api_key;
       if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
-      env.CLAUDEBRIDGE_DB = pathResolve("./data/claudebridge.db");
+      env.CLAUDEBRIDGE_DB = this.store.dbPath;
 
       const child = spawn("claude", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
       child.stdin.end();
@@ -297,7 +297,7 @@ export class AgentEngine {
       const env: Record<string, string> = { ...process.env as Record<string, string> };
       if (ep.api_key) env.ANTHROPIC_API_KEY = ep.api_key;
       if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
-      env.CLAUDEBRIDGE_DB = pathResolve("./data/claudebridge.db");
+      env.CLAUDEBRIDGE_DB = this.store.dbPath;
 
       const child = spawn("claude", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
       child.stdin.end();

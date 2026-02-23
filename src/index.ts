@@ -1,6 +1,7 @@
 import { setDefaultAutoSelectFamily } from "net";
 setDefaultAutoSelectFamily(false);
 import { watch } from "fs";
+import { join, dirname, resolve } from "path";
 import { loadConfig, reloadConfig } from "./core/config.js";
 import { Store } from "./core/store.js";
 import { AgentEngine } from "./core/agent.js";
@@ -13,7 +14,11 @@ async function main() {
   const _cfgIdx = process.argv.indexOf("--config");
   const _cfgPath = _cfgIdx !== -1 ? process.argv[_cfgIdx + 1] : undefined;
   let config = loadConfig(_cfgPath);
-  const store = new Store();
+
+  // Derive DB path from config file directory (not CWD)
+  const configDir = _cfgPath ? dirname(resolve(_cfgPath)) : process.cwd();
+  const dbPath = join(configDir, "data", "claudebridge.db");
+  const store = new Store(dbPath);
   const engine = new AgentEngine(config, store);
   const adapters: Adapter[] = [];
   let webhookServer: WebhookServer | null = null;

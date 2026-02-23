@@ -1,15 +1,17 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
-import { dirname } from "path";
+import { dirname, resolve } from "path";
 
-const DB_PATH = "./data/claudebridge.db";
+const DEFAULT_DB_PATH = "./data/claudebridge.db";
 
 export class Store {
   private db: Database.Database;
+  readonly dbPath: string;
 
-  constructor() {
-    mkdirSync(dirname(DB_PATH), { recursive: true });
-    this.db = new Database(DB_PATH);
+  constructor(dbPath?: string) {
+    this.dbPath = resolve(dbPath || DEFAULT_DB_PATH);
+    mkdirSync(dirname(this.dbPath), { recursive: true });
+    this.db = new Database(this.dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
