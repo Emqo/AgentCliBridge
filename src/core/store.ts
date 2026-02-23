@@ -64,6 +64,12 @@ export class Store {
     try { this.db.exec("ALTER TABLE tasks ADD COLUMN result TEXT"); } catch {}
     try { this.db.exec("ALTER TABLE tasks ADD COLUMN scheduled_at INTEGER"); } catch {}
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)");
+
+    // Startup recovery: reset orphaned 'running' tasks back to 'auto' so they get re-executed
+    const recovered = this.db.prepare("UPDATE tasks SET status = 'auto' WHERE status = 'running'").run();
+    if (recovered.changes > 0) {
+      console.log(`[store] recovered ${recovered.changes} orphaned running task(s) back to auto queue`);
+    }
   }
 
   // --- sessions ---
