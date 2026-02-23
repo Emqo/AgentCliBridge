@@ -387,6 +387,16 @@ export class TelegramAdapter implements Adapter {
         this.store.markTaskResult(task.id, "failed");
         if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
         await this.reply(chatId, t(this.locale, "auto_failed", { id: task.id, err: "timed out" }));
+        // Self-healing: auto-retry timed out tasks
+        const retryMatch = task.description.match(/\[retry (\d+)\/3\]/);
+        const retryCount = retryMatch ? parseInt(retryMatch[1]) : 0;
+        if (retryCount < 3) {
+          const retryDesc = retryCount === 0
+            ? `[retry 1/3] Previous attempt of task #${task.id} timed out. Continue from where it left off: ${task.description}`
+            : task.description.replace(`[retry ${retryCount}/3]`, `[retry ${retryCount + 1}/3]`);
+          const retryId = this.store.addTask(task.user_id, "telegram", task.chat_id, retryDesc, undefined, true, task.parent_id || task.id, Date.now() + 120000);
+          await this.reply(chatId, t(this.locale, "auto_retry", { id: retryId, attempt: retryCount + 1, parent: task.id }));
+        }
         return;
       }
       this.store.markTaskResult(task.id, "done");
@@ -411,6 +421,16 @@ export class TelegramAdapter implements Adapter {
     } catch (err: any) {
       this.store.markTaskResult(task.id, "failed");
       await this.reply(chatId, t(this.locale, "auto_failed", { id: task.id, err: err.message || "unknown" }));
+      // Self-healing: auto-retry failed tasks (max 3 retries)
+      const retryMatch = task.description.match(/\[retry (\d+)\/3\]/);
+      const retryCount = retryMatch ? parseInt(retryMatch[1]) : 0;
+      if (retryCount < 3) {
+        const retryDesc = retryCount === 0
+          ? `[retry 1/3] Previous attempt of task #${task.id} failed (${(err.message || "unknown").slice(0, 100)}). Analyze the failure, fix the issue, then: ${task.description}`
+          : task.description.replace(`[retry ${retryCount}/3]`, `[retry ${retryCount + 1}/3]`);
+        const retryId = this.store.addTask(task.user_id, "telegram", task.chat_id, retryDesc, undefined, true, task.parent_id || task.id, Date.now() + 120000);
+        await this.reply(chatId, t(this.locale, "auto_retry", { id: retryId, attempt: retryCount + 1, parent: task.id }));
+      }
     }
   }
 

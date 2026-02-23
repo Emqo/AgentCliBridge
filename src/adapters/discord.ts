@@ -227,6 +227,14 @@ export class DiscordAdapter implements Adapter {
         this.store.markTaskResult(task.id, "failed");
         if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
         await channel.send(t(this.locale, "auto_failed", { id: task.id, err: "timed out" }));
+        const retryMatch = task.description.match(/\[retry (\d+)\/3\]/);
+        const retryCount = retryMatch ? parseInt(retryMatch[1]) : 0;
+        if (retryCount < 3) {
+          const retryDesc = retryCount === 0
+            ? `[retry 1/3] Previous attempt of task #${task.id} timed out. Continue from where it left off: ${task.description}`
+            : task.description.replace(`[retry ${retryCount}/3]`, `[retry ${retryCount + 1}/3]`);
+          this.store.addTask(task.user_id, "discord", task.chat_id, retryDesc, undefined, true, task.parent_id || task.id, Date.now() + 120000);
+        }
         return;
       }
       this.store.markTaskResult(task.id, "done");
@@ -244,6 +252,15 @@ export class DiscordAdapter implements Adapter {
     } catch (err: any) {
       this.store.markTaskResult(task.id, "failed");
       console.error(`[discord] auto-task #${task.id} failed:`, err);
+      // Self-healing: auto-retry failed tasks (max 3 retries)
+      const retryMatch = task.description.match(/\[retry (\d+)\/3\]/);
+      const retryCount = retryMatch ? parseInt(retryMatch[1]) : 0;
+      if (retryCount < 3) {
+        const retryDesc = retryCount === 0
+          ? `[retry 1/3] Previous attempt of task #${task.id} failed (${(err.message || "unknown").slice(0, 100)}). Analyze the failure, fix the issue, then: ${task.description}`
+          : task.description.replace(`[retry ${retryCount}/3]`, `[retry ${retryCount + 1}/3]`);
+        this.store.addTask(task.user_id, "discord", task.chat_id, retryDesc, undefined, true, task.parent_id || task.id, Date.now() + 120000);
+      }
       try {
         const ch = await this.client.channels.fetch(task.chat_id);
         if (ch?.isTextBased() && "send" in ch) {
