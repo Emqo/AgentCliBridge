@@ -383,12 +383,25 @@ export class TelegramAdapter implements Adapter {
       const res = this.maxParallel > 1
         ? await this.engine.runParallel(task.user_id, task.description, "telegram", task.chat_id)
         : await this.engine.runStream(task.user_id, task.description, "telegram", task.chat_id);
+      if (res.timedOut) {
+        this.store.markTaskResult(task.id, "failed");
+        if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
+        await this.reply(chatId, t(this.locale, "auto_failed", { id: task.id, err: "timed out" }));
+        return;
+      }
       this.store.markTaskResult(task.id, "done");
       if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
       const maxLen = this.config.chunk_size || 4000;
-      const chunks = chunkText(res.text || "(no output)", maxLen);
+      const rawChunks = chunkText(res.text || "(no output)", maxLen);
+      const mdChunks = chunkText(toTelegramMarkdown(res.text || "(no output)"), maxLen);
       await this.reply(chatId, t(this.locale, "auto_done", { id: task.id, cost: (res.cost || 0).toFixed(4) }));
-      for (const c of chunks) await this.reply(chatId, c);
+      for (let i = 0; i < mdChunks.length; i++) {
+        try {
+          await this.call("sendMessage", { chat_id: chatId, text: mdChunks[i], parse_mode: "MarkdownV2" });
+        } catch {
+          await this.reply(chatId, rawChunks[i] || mdChunks[i]);
+        }
+      }
       // Chain progress reporting
       if (task.parent_id) {
         const progress = this.store.getChainProgress(task.parent_id);

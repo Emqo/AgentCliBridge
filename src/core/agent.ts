@@ -12,6 +12,7 @@ export interface AgentResponse {
   text: string;
   sessionId: string;
   cost?: number;
+  timedOut?: boolean;
 }
 
 export type StreamCallback = (chunk: string, full: string) => void | Promise<void>;
@@ -196,7 +197,7 @@ export class AgentEngine {
       child.stdin.end();
       console.log(`[agent] spawned claude pid=${child.pid} cwd=${cwd} args=${args.join(" ")}`);
 
-      const timeoutMs = (this.config.agent.timeout_seconds || 300) * 1000;
+      const timeoutMs = (this.config.agent.timeout_seconds || 600) * 1000;
       const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs);
 
       let fullText = "";
@@ -248,8 +249,9 @@ export class AgentEngine {
         clearTimeout(timer);
         console.log(`[agent] claude exited code=${code} signal=${signal} fullText=${fullText.length}chars stderr=${stderr.slice(0, 200)}`);
         if (signal === "SIGTERM") {
+          console.warn(`[agent] claude timed out after ${timeoutMs / 1000}s`);
           if (newSessionId) this.store.setSession(userId, newSessionId, platform);
-          resolve({ text: fullText.trim() || "(timed out)", sessionId: newSessionId, cost });
+          resolve({ text: fullText.trim() || "(timed out)", sessionId: newSessionId, cost, timedOut: true });
           return;
         }
         if (code === 0 || fullText.trim()) {
@@ -303,7 +305,7 @@ export class AgentEngine {
       child.stdin.end();
       console.log(`[agent] spawned claude (parallel) pid=${child.pid} cwd=${cwd}`);
 
-      const timeoutMs = (this.config.agent.timeout_seconds || 300) * 1000;
+      const timeoutMs = (this.config.agent.timeout_seconds || 600) * 1000;
       const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs);
 
       let fullText = "";
@@ -345,8 +347,11 @@ export class AgentEngine {
       child.on("close", (code, signal) => {
         clearTimeout(timer);
         console.log(`[agent] claude (parallel) exited code=${code} signal=${signal} text=${fullText.length}chars`);
-        if (code === 0 || fullText.trim() || signal === "SIGTERM") {
-          resolve({ text: fullText.trim() || (signal === "SIGTERM" ? "(timed out)" : "(no response)"), sessionId, cost });
+        if (signal === "SIGTERM") {
+          console.warn(`[agent] claude (parallel) timed out after ${timeoutMs / 1000}s`);
+          resolve({ text: fullText.trim() || "(timed out)", sessionId, cost, timedOut: true });
+        } else if (code === 0 || fullText.trim()) {
+          resolve({ text: fullText.trim() || "(no response)", sessionId, cost });
         } else {
           reject(new Error(`claude exited ${code}: ${stderr.slice(0, 500)}`));
         }

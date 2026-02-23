@@ -223,6 +223,12 @@ export class DiscordAdapter implements Adapter {
       const res = this.maxParallel > 1
         ? await this.engine.runParallel(task.user_id, task.description, "discord", task.chat_id)
         : await this.engine.runStream(task.user_id, task.description, "discord", task.chat_id);
+      if (res.timedOut) {
+        this.store.markTaskResult(task.id, "failed");
+        if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
+        await channel.send(t(this.locale, "auto_failed", { id: task.id, err: "timed out" }));
+        return;
+      }
       this.store.markTaskResult(task.id, "done");
       if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
       const maxLen = this.config.chunk_size || 1900;
