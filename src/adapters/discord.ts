@@ -221,8 +221,8 @@ export class DiscordAdapter implements Adapter {
       await channel.send(t(this.locale, "auto_starting", { id: task.id, desc: task.description }));
       console.log(`[discord] auto-task #${task.id} for ${task.user_id}`);
       const res = this.maxParallel > 1
-        ? await this.engine.runParallel(task.user_id, task.description, "discord", task.chat_id)
-        : await this.engine.runStream(task.user_id, task.description, "discord", task.chat_id);
+        ? await this.engine.runParallel(task.user_id, task.description, "discord", task.chat_id, undefined, 0)
+        : await this.engine.runStream(task.user_id, task.description, "discord", task.chat_id, undefined, 0);
       if (res.timedOut) {
         this.store.markTaskResult(task.id, "failed");
         if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));

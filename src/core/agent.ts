@@ -76,14 +76,15 @@ export class AgentEngine {
     prompt: string,
     platform: string,
     chatId: string,
-    onChunk?: StreamCallback
+    onChunk?: StreamCallback,
+    overrideTimeoutMs?: number
   ): Promise<AgentResponse> {
     const release = await this.lock.acquire(userId);
     try {
       this.store.addHistory(userId, platform, "user", prompt);
       const memories = this.config.agent.memory?.enabled ? this.store.getMemories(userId) : [];
       const memoryPrompt = memories.length ? memories.map(m => `- ${m.content}`).join("\n") : "";
-      const res = await this._executeWithRetry(userId, prompt, platform, chatId, onChunk, memoryPrompt);
+      const res = await this._executeWithRetry(userId, prompt, platform, chatId, onChunk, memoryPrompt, overrideTimeoutMs);
       this.store.addHistory(userId, platform, "assistant", res.text);
       this.store.recordUsage(userId, platform, res.cost || 0);
       if (this.config.agent.memory?.auto_summary) this._autoSummarize(userId, prompt, res.text);
@@ -98,7 +99,8 @@ export class AgentEngine {
     prompt: string,
     platform: string,
     chatId: string,
-    onChunk?: StreamCallback
+    onChunk?: StreamCallback,
+    overrideTimeoutMs?: number
   ): Promise<AgentResponse> {
     // No per-user lock — parallel tasks are independent
     // No session resume — fresh session to prevent conflicts
@@ -111,7 +113,7 @@ export class AgentEngine {
         ? this.rotator.next()
         : { name: "cli-default", api_key: "", base_url: "", model: "" };
       try {
-        const res = await this._executeNoSession(userId, prompt, platform, chatId, ep, onChunk, memoryPrompt);
+        const res = await this._executeNoSession(userId, prompt, platform, chatId, ep, onChunk, memoryPrompt, overrideTimeoutMs);
         this.store.recordUsage(userId, platform, res.cost || 0);
         return res;
       } catch (err: any) {
@@ -134,7 +136,8 @@ export class AgentEngine {
     platform: string,
     chatId: string,
     onChunk?: StreamCallback,
-    memoryPrompt?: string
+    memoryPrompt?: string,
+    overrideTimeoutMs?: number
   ): Promise<AgentResponse> {
     const maxRetries = Math.max(Math.min(this.rotator.count, 3), 1);
     let lastErr: any;
@@ -143,7 +146,7 @@ export class AgentEngine {
         ? this.rotator.next()
         : { name: "cli-default", api_key: "", base_url: "", model: "" };
       try {
-        return await this._execute(userId, prompt, platform, chatId, ep, onChunk, memoryPrompt);
+        return await this._execute(userId, prompt, platform, chatId, ep, onChunk, memoryPrompt, overrideTimeoutMs);
       } catch (err: any) {
         lastErr = err;
         const msg = String(err?.message || "");
@@ -165,7 +168,8 @@ export class AgentEngine {
     chatId: string,
     ep: Endpoint,
     onChunk?: StreamCallback,
-    memoryPrompt?: string
+    memoryPrompt?: string,
+    overrideTimeoutMs?: number
   ): Promise<AgentResponse> {
     return new Promise((resolve, reject) => {
       const sessionId = this.store.getSession(userId) || "";
@@ -197,8 +201,8 @@ export class AgentEngine {
       child.stdin.end();
       console.log(`[agent] spawned claude pid=${child.pid} cwd=${cwd} args=${args.join(" ")}`);
 
-      const timeoutMs = (this.config.agent.timeout_seconds || 600) * 1000;
-      const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs);
+      const timeoutMs = overrideTimeoutMs !== undefined ? overrideTimeoutMs : (this.config.agent.timeout_seconds || 600) * 1000;
+      const timer = timeoutMs > 0 ? setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs) : null;
 
       let fullText = "";
       let newSessionId = sessionId;
@@ -246,7 +250,7 @@ export class AgentEngine {
       });
 
       child.on("close", (code, signal) => {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         console.log(`[agent] claude exited code=${code} signal=${signal} fullText=${fullText.length}chars stderr=${stderr.slice(0, 200)}`);
         if (signal === "SIGTERM") {
           console.warn(`[agent] claude timed out after ${timeoutMs / 1000}s`);
@@ -275,7 +279,8 @@ export class AgentEngine {
     chatId: string,
     ep: Endpoint,
     onChunk?: StreamCallback,
-    memoryPrompt?: string
+    memoryPrompt?: string,
+    overrideTimeoutMs?: number
   ): Promise<AgentResponse> {
     return new Promise((resolve, reject) => {
       const cwd = this.getWorkDir(userId);
@@ -305,8 +310,8 @@ export class AgentEngine {
       child.stdin.end();
       console.log(`[agent] spawned claude (parallel) pid=${child.pid} cwd=${cwd}`);
 
-      const timeoutMs = (this.config.agent.timeout_seconds || 600) * 1000;
-      const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs);
+      const timeoutMs = overrideTimeoutMs !== undefined ? overrideTimeoutMs : (this.config.agent.timeout_seconds || 600) * 1000;
+      const timer = timeoutMs > 0 ? setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs) : null;
 
       let fullText = "";
       let sessionId = "";
@@ -345,7 +350,7 @@ export class AgentEngine {
       child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
 
       child.on("close", (code, signal) => {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         console.log(`[agent] claude (parallel) exited code=${code} signal=${signal} text=${fullText.length}chars`);
         if (signal === "SIGTERM") {
           console.warn(`[agent] claude (parallel) timed out after ${timeoutMs / 1000}s`);

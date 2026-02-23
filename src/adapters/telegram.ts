@@ -381,8 +381,8 @@ export class TelegramAdapter implements Adapter {
     try {
       console.log(`[telegram] auto-task #${task.id} for ${task.user_id}`);
       const res = this.maxParallel > 1
-        ? await this.engine.runParallel(task.user_id, task.description, "telegram", task.chat_id)
-        : await this.engine.runStream(task.user_id, task.description, "telegram", task.chat_id);
+        ? await this.engine.runParallel(task.user_id, task.description, "telegram", task.chat_id, undefined, 0)
+        : await this.engine.runStream(task.user_id, task.description, "telegram", task.chat_id, undefined, 0);
       if (res.timedOut) {
         this.store.markTaskResult(task.id, "failed");
         if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
