@@ -87,10 +87,35 @@ if (category === "memory") {
 } else if (category === "auto") {
   if (action === "add") {
     const [userId, platform, chatId, ...descParts] = rest;
-    if (!userId || !platform || !chatId || !descParts.length) fail("Usage: auto add <user_id> <platform> <chat_id> <description>");
+    if (!userId || !platform || !chatId || !descParts.length) fail("Usage: auto add <user_id> <platform> <chat_id> <description> [--parent <id>]");
+    // Parse optional --parent flag
+    let parentId: number | null = null;
+    const parentIdx = descParts.indexOf("--parent");
+    if (parentIdx !== -1 && descParts[parentIdx + 1]) {
+      parentId = parseInt(descParts[parentIdx + 1]);
+      descParts.splice(parentIdx, 2);
+    }
     const desc = descParts.join(" ");
-    const r = db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, created_at) VALUES (?, ?, ?, ?, 'auto', ?)").run(userId, platform, chatId, desc, Date.now());
+    const r = db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, parent_id, created_at) VALUES (?, ?, ?, ?, 'auto', ?, ?)").run(userId, platform, chatId, desc, parentId, Date.now());
     output({ ok: true, id: Number(r.lastInsertRowid), message: "Auto task queued" });
+  } else if (action === "add-approval") {
+    const [userId, platform, chatId, ...descParts] = rest;
+    if (!userId || !platform || !chatId || !descParts.length) fail("Usage: auto add-approval <user_id> <platform> <chat_id> <description> [--parent <id>]");
+    let parentId: number | null = null;
+    const parentIdx = descParts.indexOf("--parent");
+    if (parentIdx !== -1 && descParts[parentIdx + 1]) {
+      parentId = parseInt(descParts[parentIdx + 1]);
+      descParts.splice(parentIdx, 2);
+    }
+    const desc = descParts.join(" ");
+    const r = db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, parent_id, created_at) VALUES (?, ?, ?, ?, 'approval_pending', ?, ?)").run(userId, platform, chatId, desc, parentId, Date.now());
+    output({ ok: true, id: Number(r.lastInsertRowid), message: "Auto task queued for approval" });
+  } else if (action === "result") {
+    const [taskId, ...resultParts] = rest;
+    if (!taskId || !resultParts.length) fail("Usage: auto result <task_id> <result_text>");
+    const resultText = resultParts.join(" ");
+    db.prepare("UPDATE tasks SET result = ? WHERE id = ?").run(resultText, parseInt(taskId));
+    output({ ok: true, message: "Task result saved" });
   } else if (action === "list") {
     const [userId] = rest;
     if (!userId) fail("Usage: auto list <user_id>");
@@ -102,7 +127,7 @@ if (category === "memory") {
     db.prepare("UPDATE tasks SET status = 'cancelled' WHERE id = ?").run(parseInt(taskId));
     output({ ok: true, message: "Auto task cancelled" });
   } else {
-    fail("Usage: auto <add|list|cancel> ...");
+    fail("Usage: auto <add|add-approval|result|list|cancel> ...");
   }
 } else {
   fail("Usage: claudebridge-ctl <memory|task|reminder|auto> <action> [args...]");

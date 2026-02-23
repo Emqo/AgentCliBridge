@@ -53,6 +53,10 @@ export class AgentEngine {
     return this.rotator.count;
   }
 
+  getMaxParallel(): number {
+    return this.config.agent.max_parallel || 1;
+  }
+
   getWorkDir(userId: string): string {
     if (!this.config.workspace.isolation) {
       return this.config.agent.cwd || process.cwd();
@@ -86,6 +90,41 @@ export class AgentEngine {
     } finally {
       release();
     }
+  }
+
+  async runParallel(
+    userId: string,
+    prompt: string,
+    platform: string,
+    chatId: string,
+    onChunk?: StreamCallback
+  ): Promise<AgentResponse> {
+    // No per-user lock — parallel tasks are independent
+    // No session resume — fresh session to prevent conflicts
+    const memories = this.config.agent.memory?.enabled ? this.store.getMemories(userId) : [];
+    const memoryPrompt = memories.length ? memories.map(m => `- ${m.content}`).join("\n") : "";
+    const maxRetries = Math.max(Math.min(this.rotator.count, 3), 1);
+    let lastErr: any;
+    for (let i = 0; i < maxRetries; i++) {
+      const ep = this.rotator.count
+        ? this.rotator.next()
+        : { name: "cli-default", api_key: "", base_url: "", model: "" };
+      try {
+        const res = await this._executeNoSession(userId, prompt, platform, chatId, ep, onChunk, memoryPrompt);
+        this.store.recordUsage(userId, platform, res.cost || 0);
+        return res;
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.message || "");
+        if (msg.includes("429") || msg.includes("401") || msg.includes("529")) {
+          console.warn(`[agent] endpoint ${ep.name} failed (parallel), rotating`);
+          this.rotator.markFailed(ep);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
   }
 
   private async _executeWithRetry(
@@ -219,6 +258,96 @@ export class AgentEngine {
         } else {
           // Don't save session on failure — stale session would lock the user in a failure loop
           this.store.clearSession(userId);
+          reject(new Error(`claude exited ${code}: ${stderr.slice(0, 500)}`));
+        }
+      });
+
+      child.on("error", reject);
+    });
+  }
+
+  private _executeNoSession(
+    userId: string,
+    prompt: string,
+    platform: string,
+    chatId: string,
+    ep: Endpoint,
+    onChunk?: StreamCallback,
+    memoryPrompt?: string
+  ): Promise<AgentResponse> {
+    return new Promise((resolve, reject) => {
+      const cwd = this.getWorkDir(userId);
+
+      const args = ["-p", prompt, "--verbose", "--output-format", "stream-json", "--permission-mode", this.config.agent.permission_mode || "acceptEdits"];
+      if (ep.model) args.push("--model", ep.model);
+      // No session resume — fresh session for parallel execution
+      if (this.config.agent.system_prompt) args.push("--system-prompt", this.config.agent.system_prompt);
+
+      let appendPrompt = "";
+      if (memoryPrompt) appendPrompt += `User memories:\n${memoryPrompt}\n\n`;
+      if (this.config.agent.skill?.enabled !== false) {
+        appendPrompt += generateSkillDoc({ userId, chatId, platform, locale: this.config.locale || "en" });
+      }
+      if (appendPrompt) args.push("--append-system-prompt", appendPrompt.trim());
+
+      if (this.config.agent.allowed_tools?.length) args.push("--allowed-tools", this.config.agent.allowed_tools.join(","));
+      if (this.config.agent.max_turns) args.push("--max-turns", String(this.config.agent.max_turns));
+      if (this.config.agent.max_budget_usd) args.push("--max-budget-usd", String(this.config.agent.max_budget_usd));
+
+      const env: Record<string, string> = { ...process.env as Record<string, string> };
+      if (ep.api_key) env.ANTHROPIC_API_KEY = ep.api_key;
+      if (ep.base_url) env.ANTHROPIC_BASE_URL = ep.base_url;
+      env.CLAUDEBRIDGE_DB = pathResolve("./data/claudebridge.db");
+
+      const child = spawn("claude", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+      child.stdin.end();
+      console.log(`[agent] spawned claude (parallel) pid=${child.pid} cwd=${cwd}`);
+
+      const timeoutMs = (this.config.agent.timeout_seconds || 300) * 1000;
+      const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs);
+
+      let fullText = "";
+      let sessionId = "";
+      let cost = 0;
+      let buffer = "";
+
+      child.stdout.on("data", (data: Buffer) => {
+        buffer += data.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
+              sessionId = msg.session_id;
+            }
+            if (msg.type === "assistant" && msg.message?.content) {
+              for (const block of msg.message.content) {
+                if (block.type === "text" && block.text) {
+                  fullText += block.text + "\n";
+                  if (onChunk) onChunk(block.text, fullText);
+                }
+              }
+            }
+            if (msg.type === "result") {
+              if (msg.result) fullText = msg.result;
+              if (msg.total_cost_usd) cost = msg.total_cost_usd;
+            }
+          } catch {}
+        }
+      });
+
+      let stderr = "";
+      child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
+
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        console.log(`[agent] claude (parallel) exited code=${code} signal=${signal} text=${fullText.length}chars`);
+        if (code === 0 || fullText.trim() || signal === "SIGTERM") {
+          resolve({ text: fullText.trim() || (signal === "SIGTERM" ? "(timed out)" : "(no response)"), sessionId, cost });
+        } else {
           reject(new Error(`claude exited ${code}: ${stderr.slice(0, 500)}`));
         }
       });

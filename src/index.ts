@@ -6,6 +6,7 @@ import { Store } from "./core/store.js";
 import { AgentEngine } from "./core/agent.js";
 import { TelegramAdapter } from "./adapters/telegram.js";
 import { DiscordAdapter } from "./adapters/discord.js";
+import { WebhookServer } from "./webhook.js";
 import { Adapter } from "./adapters/base.js";
 
 async function main() {
@@ -15,6 +16,7 @@ async function main() {
   const store = new Store();
   const engine = new AgentEngine(config, store);
   const adapters: Adapter[] = [];
+  let webhookServer: WebhookServer | null = null;
 
   if (config.platforms.telegram.enabled) {
     if (!config.platforms.telegram.token) {
@@ -37,10 +39,17 @@ async function main() {
     process.exit(1);
   }
 
+  // Start webhook server if enabled
+  if (config.webhook?.enabled) {
+    webhookServer = new WebhookServer(store, config.webhook, config.cron || []);
+    webhookServer.start();
+  }
+
   // --- Register signal handlers and hot-reload BEFORE starting adapters ---
   const shutdown = () => {
     console.log("[claudebridge] shutting down...");
     for (const a of adapters) a.stop();
+    if (webhookServer) webhookServer.stop();
     setTimeout(() => process.exit(0), 1000);
   };
   process.on("SIGINT", shutdown);

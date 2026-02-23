@@ -1,7 +1,7 @@
 {
   "name": "@emqo/claudebridge",
-  "version": "0.4.0",
-  "description": "Bridge Claude Code Agent SDK to chat platforms (Telegram, Discord, etc.)",
+  "version": "0.5.0",
+  "description": "Bridge claude CLI to chat platforms (Telegram, Discord) with HITL approval, conditional branching, webhook triggers, parallel execution, and observability",
   "main": "dist/index.js",
   "bin": {
     "claudebridge": "dist/cli.js",
@@ -17,20 +17,28 @@
     "claude",
     "claude-code",
     "telegram",
+    "discord",
     "bridge",
-    "agent"
+    "agent",
+    "chatbot",
+    "hitl",
+    "webhook",
+    "multi-agent"
   ],
   "files": [
     "dist",
     "config.yaml.example"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Emqo/ClaudeBridge.git"
+  },
+  "homepage": "https://github.com/Emqo/ClaudeBridge#readme",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.50",
     "better-sqlite3": "^12.6.2",
     "discord.js": "^14.25.1",
     "dotenv": "^17.3.1",
-    "grammy": "^1.40.0",
     "ioredis": "^5.9.3",
     "yaml": "^2.8.2"
   },

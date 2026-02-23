@@ -18,7 +18,9 @@ export class TelegramAdapter implements Adapter {
   private offset = 0;
   private reminderTimer?: ReturnType<typeof setInterval>;
   private autoTimer?: ReturnType<typeof setInterval>;
-  private autoRunning = false;
+  private approvalTimer?: ReturnType<typeof setInterval>;
+  private activeAutoTasks = 0;
+  private maxParallel = 1;
   private pages = new Map<string, { chunks: string[]; raw: string[]; ts: number }>();
   private static PAGE_TTL = 30 * 60 * 1000; // 30 minutes
 
@@ -81,7 +83,12 @@ export class TelegramAdapter implements Adapter {
 
   private async handleUpdate(update: TgUpdate) {
     if (update.callback_query) {
-      await this.handlePageCallback(update.callback_query);
+      const data = update.callback_query.data || "";
+      if (data.startsWith("approve:") || data.startsWith("reject:")) {
+        await this.handleApprovalCallback(update.callback_query);
+      } else {
+        await this.handlePageCallback(update.callback_query);
+      }
       return;
     }
     const msg = update.message;
@@ -135,6 +142,10 @@ export class TelegramAdapter implements Adapter {
     if (text === "/reload") {
       try { const c = reloadConfig(); this.engine.reloadConfig(c); this.locale = c.locale; await this.reply(chatId, t(this.locale, "config_reloaded")); }
       catch (e: any) { await this.reply(chatId, t(this.locale, "reload_failed") + e.message); }
+      return;
+    }
+    if (text === "/status") {
+      await this.handleStatusCommand(chatId, String(uid));
       return;
     }
 
@@ -304,9 +315,11 @@ export class TelegramAdapter implements Adapter {
 
   async start(): Promise<void> {
     this.running = true;
-    console.log("[telegram] starting long polling...");
+    this.maxParallel = this.engine.getMaxParallel();
+    console.log(`[telegram] starting long polling... (max_parallel=${this.maxParallel})`);
     this.reminderTimer = setInterval(() => this.checkReminders(), 30000);
     this.autoTimer = setInterval(() => this.processAutoTasks(), 60000);
+    this.approvalTimer = setInterval(() => this.checkApprovals(), 15000);
     await this.registerCommands();
     while (this.running) {
       try {
@@ -331,6 +344,7 @@ export class TelegramAdapter implements Adapter {
     this.running = false;
     if (this.reminderTimer) clearInterval(this.reminderTimer);
     if (this.autoTimer) clearInterval(this.autoTimer);
+    if (this.approvalTimer) clearInterval(this.approvalTimer);
   }
 
   private async registerCommands(): Promise<void> {
@@ -351,26 +365,127 @@ export class TelegramAdapter implements Adapter {
   }
 
   private async processAutoTasks(): Promise<void> {
-    if (this.autoRunning) return;
-    const task = this.store.getNextAutoTask("telegram");
-    if (!task) return;
-    this.autoRunning = true;
-    this.store.markTaskRunning(task.id);
+    const available = this.maxParallel - this.activeAutoTasks;
+    if (available <= 0) return;
+    const tasks = this.store.getNextAutoTasks("telegram", available);
+    for (const task of tasks) {
+      this.activeAutoTasks++;
+      this.store.markTaskRunning(task.id);
+      this.runAutoTask(task).finally(() => { this.activeAutoTasks--; });
+    }
+  }
+
+  private async runAutoTask(task: { id: number; user_id: string; platform: string; chat_id: string; description: string; parent_id: number | null }): Promise<void> {
     const chatId = Number(task.chat_id);
     await this.reply(chatId, t(this.locale, "auto_starting", { id: task.id, desc: task.description }));
     try {
       console.log(`[telegram] auto-task #${task.id} for ${task.user_id}`);
-      const res = await this.engine.runStream(task.user_id, task.description, "telegram", task.chat_id);
+      const res = this.maxParallel > 1
+        ? await this.engine.runParallel(task.user_id, task.description, "telegram", task.chat_id)
+        : await this.engine.runStream(task.user_id, task.description, "telegram", task.chat_id);
       this.store.markTaskResult(task.id, "done");
+      if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));
       const maxLen = this.config.chunk_size || 4000;
       const chunks = chunkText(res.text || "(no output)", maxLen);
       await this.reply(chatId, t(this.locale, "auto_done", { id: task.id, cost: (res.cost || 0).toFixed(4) }));
       for (const c of chunks) await this.reply(chatId, c);
+      // Chain progress reporting
+      if (task.parent_id) {
+        const progress = this.store.getChainProgress(task.parent_id);
+        const costSuffix = res.cost ? ` | Cost: $${res.cost.toFixed(4)}` : "";
+        await this.reply(chatId, t(this.locale, "chain_progress", { id: task.parent_id, done: progress.done, total: progress.total, cost: costSuffix }));
+      }
     } catch (err: any) {
       this.store.markTaskResult(task.id, "failed");
       await this.reply(chatId, t(this.locale, "auto_failed", { id: task.id, err: err.message || "unknown" }));
-    } finally {
-      this.autoRunning = false;
     }
+  }
+
+  private async checkApprovals(): Promise<void> {
+    try {
+      const pending = this.store.getPendingApprovals("telegram");
+      for (const task of pending) {
+        const chatId = Number(task.chat_id);
+        const keyboard = {
+          inline_keyboard: [[
+            { text: "✅ Approve", callback_data: `approve:${task.id}` },
+            { text: "❌ Reject", callback_data: `reject:${task.id}` },
+          ]],
+        };
+        await this.call("sendMessage", {
+          chat_id: chatId,
+          text: t(this.locale, "approval_request", { id: task.id, desc: task.description }),
+          reply_markup: keyboard,
+        });
+        this.store.markReminderSent(task.id); // reuse reminder_sent to avoid re-sending
+      }
+    } catch (e) { console.error("[telegram] approval check error:", e); }
+  }
+
+  private async handleApprovalCallback(cb: any): Promise<void> {
+    const data: string = cb.data || "";
+    const cbId: string = cb.id;
+    const answer = (text: string) =>
+      this.call("answerCallbackQuery", { callback_query_id: cbId, text, show_alert: true });
+
+    const [action, idStr] = data.split(":");
+    const taskId = parseInt(idStr);
+    if (isNaN(taskId)) { await answer("Invalid task ID"); return; }
+
+    if (action === "approve") {
+      const ok = this.store.approveTask(taskId);
+      if (ok) {
+        await answer(t(this.locale, "approval_approved", { id: taskId }));
+        // Edit the original message to show approved
+        if (cb.message) {
+          try {
+            await this.call("editMessageText", {
+              chat_id: cb.message.chat.id,
+              message_id: cb.message.message_id,
+              text: t(this.locale, "approval_approved", { id: taskId }),
+            });
+          } catch {}
+        }
+      } else {
+        await answer(t(this.locale, "approval_decided", { id: taskId }));
+      }
+    } else if (action === "reject") {
+      const ok = this.store.rejectTask(taskId);
+      if (ok) {
+        await answer(t(this.locale, "approval_rejected", { id: taskId }));
+        if (cb.message) {
+          try {
+            await this.call("editMessageText", {
+              chat_id: cb.message.chat.id,
+              message_id: cb.message.message_id,
+              text: t(this.locale, "approval_rejected", { id: taskId }),
+            });
+          } catch {}
+        }
+      } else {
+        await answer(t(this.locale, "approval_decided", { id: taskId }));
+      }
+    }
+  }
+
+  private async handleStatusCommand(chatId: number, userId: string): Promise<void> {
+    const recent = this.store.getRecentAutoTasks("telegram", 10);
+    if (!recent.length) {
+      await this.reply(chatId, t(this.locale, "no_auto_tasks"));
+      return;
+    }
+    const statusEmoji: Record<string, string> = {
+      auto: "⏳", running: "🔄", done: "✅", failed: "❌",
+      approval_pending: "📋", cancelled: "🚫",
+    };
+    const lines = recent.map(task => {
+      const emoji = statusEmoji[task.status] || "❓";
+      const chain = task.parent_id ? ` (chain #${task.parent_id})` : "";
+      return `${emoji} #${task.id} [${task.status}] ${task.description.slice(0, 60)}${chain}`;
+    });
+    const stats = this.store.getAutoTaskStats();
+    const summary = stats.map(s => `${s.status}: ${s.count}`).join(" | ");
+    const report = `${t(this.locale, "status_report")}\n${lines.join("\n")}\n\nSummary: ${summary}`;
+    await this.reply(chatId, report);
   }
 }

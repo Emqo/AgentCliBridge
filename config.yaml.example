@@ -20,6 +20,7 @@ agent:
   permission_mode: "acceptEdits"
   max_turns: 50
   max_budget_usd: 2.0
+  max_parallel: 1  # Number of concurrent auto-task executions (1 = sequential)
   system_prompt: ""
   cwd: ""
   timeout_seconds: 300
@@ -51,3 +52,19 @@ platforms:
     enabled: false
     token: ""
     chunk_size: 1900
+
+# Webhook server for external triggers (GitHub, API, etc.)
+webhook:
+  enabled: false
+  port: 3100
+  token: "your-secret-token"  # Bearer token for /api/task
+  github_secret: ""            # HMAC secret for GitHub webhooks
+
+# Cron-like scheduled auto-tasks
+# cron:
+#   - schedule_minutes: 60
+#     user_id: "123456"
+#     platform: "telegram"
+#     chat_id: "123456"
+#     description: "Generate daily status report"
+cron: []

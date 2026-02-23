@@ -56,6 +56,11 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id);
       CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id, status);
     `);
+
+    // Schema migration: add parent_id and result columns
+    try { this.db.exec("ALTER TABLE tasks ADD COLUMN parent_id INTEGER"); } catch {}
+    try { this.db.exec("ALTER TABLE tasks ADD COLUMN result TEXT"); } catch {}
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)");
   }
 
   // --- sessions ---
@@ -137,8 +142,8 @@ export class Store {
   }
 
   // --- tasks ---
-  addTask(userId: string, platform: string, chatId: string, description: string, remindAt?: number, auto = false): number {
-    const r = this.db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, remind_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(userId, platform, chatId, description, auto ? "auto" : "pending", remindAt ?? null, Date.now());
+  addTask(userId: string, platform: string, chatId: string, description: string, remindAt?: number, auto = false, parentId?: number): number {
+    const r = this.db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, remind_at, parent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(userId, platform, chatId, description, auto ? "auto" : "pending", remindAt ?? null, parentId ?? null, Date.now());
     return Number(r.lastInsertRowid);
   }
 
@@ -176,5 +181,63 @@ export class Store {
 
   getAutoTasks(userId: string): { id: number; description: string; status: string; created_at: number }[] {
     return this.db.prepare("SELECT id, description, status, created_at FROM tasks WHERE user_id = ? AND status IN ('auto','running') ORDER BY created_at DESC").all(userId) as any[];
+  }
+
+  // --- HITL (Human-in-the-Loop) ---
+  addApprovalTask(userId: string, platform: string, chatId: string, description: string, parentId?: number): number {
+    const r = this.db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, parent_id, created_at) VALUES (?, ?, ?, ?, 'approval_pending', ?, ?)").run(userId, platform, chatId, description, parentId ?? null, Date.now());
+    return Number(r.lastInsertRowid);
+  }
+
+  getPendingApprovals(platform: string): { id: number; user_id: string; platform: string; chat_id: string; description: string }[] {
+    return this.db.prepare("SELECT id, user_id, platform, chat_id, description FROM tasks WHERE status = 'approval_pending' AND platform = ? AND reminder_sent = 0").all(platform) as any[];
+  }
+
+  approveTask(taskId: number): boolean {
+    const r = this.db.prepare("UPDATE tasks SET status = 'auto' WHERE id = ? AND status = 'approval_pending'").run(taskId);
+    return r.changes > 0;
+  }
+
+  rejectTask(taskId: number): boolean {
+    const r = this.db.prepare("UPDATE tasks SET status = 'cancelled' WHERE id = ? AND status = 'approval_pending'").run(taskId);
+    return r.changes > 0;
+  }
+
+  // --- Branching ---
+  setTaskResult(taskId: number, result: string): void {
+    this.db.prepare("UPDATE tasks SET result = ? WHERE id = ?").run(result, taskId);
+  }
+
+  getTaskChain(parentId: number): { id: number; description: string; status: string; result: string | null; created_at: number }[] {
+    return this.db.prepare("SELECT id, description, status, result, created_at FROM tasks WHERE parent_id = ? ORDER BY created_at ASC").all(parentId) as any[];
+  }
+
+  // --- Parallel ---
+  getNextAutoTasks(platform: string, limit: number): { id: number; user_id: string; platform: string; chat_id: string; description: string; parent_id: number | null }[] {
+    return this.db.prepare("SELECT id, user_id, platform, chat_id, description, parent_id FROM tasks WHERE status = 'auto' AND platform = ? ORDER BY created_at ASC LIMIT ?").all(platform, limit) as any[];
+  }
+
+  // --- Observability ---
+  getAutoTaskStats(userId?: string): { status: string; count: number }[] {
+    if (userId) {
+      return this.db.prepare("SELECT status, COUNT(*) as count FROM tasks WHERE user_id = ? AND status IN ('auto','running','done','failed','approval_pending','cancelled') GROUP BY status").all(userId) as any[];
+    }
+    return this.db.prepare("SELECT status, COUNT(*) as count FROM tasks WHERE status IN ('auto','running','done','failed','approval_pending','cancelled') GROUP BY status").all() as any[];
+  }
+
+  getChainProgress(parentId: number): { total: number; done: number; failed: number; running: number } {
+    const rows = this.db.prepare("SELECT status, COUNT(*) as count FROM tasks WHERE parent_id = ? GROUP BY status").all(parentId) as { status: string; count: number }[];
+    const result = { total: 0, done: 0, failed: 0, running: 0 };
+    for (const r of rows) {
+      result.total += r.count;
+      if (r.status === "done") result.done = r.count;
+      else if (r.status === "failed") result.failed = r.count;
+      else if (r.status === "running") result.running = r.count;
+    }
+    return result;
+  }
+
+  getRecentAutoTasks(platform: string, limit: number): { id: number; user_id: string; description: string; status: string; parent_id: number | null; created_at: number }[] {
+    return this.db.prepare("SELECT id, user_id, description, status, parent_id, created_at FROM tasks WHERE platform = ? AND status IN ('auto','running','done','failed','approval_pending','cancelled') ORDER BY created_at DESC LIMIT ?").all(platform, limit) as any[];
   }
 }

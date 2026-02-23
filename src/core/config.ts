@@ -21,6 +21,7 @@ export interface AgentConfig {
   system_prompt: string;
   cwd: string;
   timeout_seconds: number;
+  max_parallel: number;
   memory: MemoryConfig;
   skill: SkillConfig;
 }
@@ -52,6 +53,21 @@ export interface RedisConfig {
   url: string;
 }
 
+export interface WebhookConfig {
+  enabled: boolean;
+  port: number;
+  token: string;
+  github_secret: string;
+}
+
+export interface CronEntry {
+  schedule_minutes: number;
+  user_id: string;
+  platform: string;
+  chat_id: string;
+  description: string;
+}
+
 export interface Config {
   endpoints: Endpoint[];
   agent: AgentConfig;
@@ -60,6 +76,8 @@ export interface Config {
   redis: RedisConfig;
   locale: string;
   platforms: { telegram: TelegramConfig; discord: DiscordConfig };
+  webhook: WebhookConfig;
+  cron: CronEntry[];
 }
 
 let _configPath = "config.yaml";
@@ -72,6 +90,7 @@ export function loadConfig(path?: string): Config {
     agent: {
       ...raw.agent,
       timeout_seconds: raw.agent?.timeout_seconds ?? 300,
+      max_parallel: raw.agent?.max_parallel ?? 1,
       memory: { enabled: true, auto_summary: true, max_memories: 50, ...raw.agent?.memory },
       skill: { enabled: true, ...raw.agent?.skill },
     },
@@ -80,6 +99,8 @@ export function loadConfig(path?: string): Config {
     redis: raw.redis || { enabled: false, url: "" },
     locale: raw.locale || "en",
     platforms: raw.platforms,
+    webhook: { enabled: false, port: 3100, token: "", github_secret: "", ...raw.webhook },
+    cron: raw.cron || [],
   };
   // defaults for each endpoint
   for (const ep of c.endpoints) {
