@@ -243,7 +243,7 @@ export class DiscordAdapter implements Adapter {
     this.maxParallel = this.engine.getMaxParallel();
     log.info("ready", { maxParallel: this.maxParallel, multiSession: this.engine.isMultiSessionEnabled() });
     this.reminderTimer = setInterval(() => this.checkReminders(), 30000);
-    this.autoTimer = setInterval(() => this.processAutoTasks(), 60000);
+    this.autoTimer = setInterval(() => this.processAutoTasks(), 5000);
     this.approvalTimer = setInterval(() => this.checkApprovals(), 15000);
     this.fileSendTimer = setInterval(() => this.checkFileSends(), 5000);
   }
@@ -274,7 +274,7 @@ export class DiscordAdapter implements Adapter {
     for (const task of tasks) {
       this.activeAutoTasks++;
       this.store.markTaskRunning(task.id);
-      this.runAutoTask(task).finally(() => { this.activeAutoTasks--; });
+      this.runAutoTask(task).finally(() => { this.activeAutoTasks--; this.processAutoTasks(); });
     }
   }
 
