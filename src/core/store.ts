@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
+import { randomUUID } from "crypto";
 import { log as rootLog } from "./logger.js";
 
 const log = rootLog.child("store");
@@ -114,9 +115,8 @@ export class Store {
     const subCount = (this.db.prepare("SELECT COUNT(*) as c FROM sub_sessions").get() as { c: number }).c;
     if (legacyCount > 0 && subCount === 0) {
       const rows = this.db.prepare("SELECT user_id, session_id, platform, updated_at FROM sessions").all() as { user_id: string; session_id: string; platform: string; updated_at: number }[];
-      const crypto = require("crypto");
       for (const row of rows) {
-        const id = crypto.randomUUID();
+        const id = randomUUID();
         this.db.prepare(
           "INSERT INTO sub_sessions (id, user_id, platform, chat_id, claude_session_id, label, status, created_at, last_active_at, message_count, total_cost) VALUES (?, ?, ?, '', ?, 'main', 'active', ?, ?, 1, 0)"
         ).run(id, row.user_id, row.platform, row.session_id, row.updated_at, row.updated_at);
