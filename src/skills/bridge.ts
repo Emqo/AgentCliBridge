@@ -14,8 +14,8 @@ export interface SkillContext {
 }
 
 export function generateSkillDoc(ctx: SkillContext): string {
-  const ctlPath = resolve(__dirname, "../ctl.js");
-  const ctl = `node ${ctlPath}`;
+  const ctlPath = resolve(__dirname, "../ctl.js").replace(/\\/g, "/");
+  const ctl = `node "${ctlPath}"`;
 
   if (ctx.locale === "zh") {
     return [
