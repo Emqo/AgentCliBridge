@@ -46,10 +46,12 @@ export class UserLock {
 
   private async _acquireRedis(userId: string): Promise<() => void> {
     const key = this.prefix + userId;
-    // spin until acquired
+    const maxWait = this.ttl * 1000 + 5000; // TTL + 5s grace
+    const start = Date.now();
     while (true) {
       const ok = await this.redis!.set(key, "1", "EX", this.ttl, "NX");
       if (ok) break;
+      if (Date.now() - start > maxWait) throw new Error(`Lock timeout for user ${userId}`);
       await new Promise((r) => setTimeout(r, 500));
     }
     return async () => {

@@ -10,6 +10,7 @@ export interface MessageContext {
 export interface Adapter {
   start(): Promise<void>;
   stop(): void;
+  reloadConfig?(config: any, locale: string): void;
 }
 
 /** Split long text into chunks respecting newlines, with code-block-aware balancing */

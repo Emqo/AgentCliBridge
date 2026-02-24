@@ -31,6 +31,12 @@ export class TelegramAdapter implements Adapter {
     private locale: string = "en"
   ) {}
 
+  reloadConfig(config: TelegramConfig, locale: string): void {
+    this.config = config;
+    this.locale = locale;
+    this.maxParallel = this.engine.getMaxParallel();
+  }
+
   private get api() {
     return `https://api.telegram.org/bot${this.config.token}`;
   }
@@ -283,6 +289,11 @@ export class TelegramAdapter implements Adapter {
       } else {
         // Multi-page — store pages and show inline keyboard
         const key = `${chatId}:${msgId}`;
+        // Evict oldest if too many pages cached
+        if (this.pages.size >= 50) {
+          const oldest = this.pages.keys().next().value!;
+          this.pages.delete(oldest);
+        }
         this.pages.set(key, { chunks: mdChunks, raw: rawChunks, ts: Date.now() });
         setTimeout(() => this.pages.delete(key), TelegramAdapter.PAGE_TTL);
 
@@ -321,21 +332,25 @@ export class TelegramAdapter implements Adapter {
     this.autoTimer = setInterval(() => this.processAutoTasks(), 60000);
     this.approvalTimer = setInterval(() => this.checkApprovals(), 15000);
     await this.registerCommands();
+    let pollBackoff = 0;
     while (this.running) {
       try {
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 15000);
-        const res = await fetch(`${this.api}/getUpdates?offset=${this.offset}&timeout=5`, { signal: ctrl.signal });
+        const timer = setTimeout(() => ctrl.abort(), 30000);
+        const res = await fetch(`${this.api}/getUpdates?offset=${this.offset}&timeout=10`, { signal: ctrl.signal });
         clearTimeout(timer);
         const json = await res.json() as any;
         if (!json.ok) { console.error("[telegram] poll error:", json); continue; }
+        pollBackoff = 0; // reset on success
         for (const update of json.result) {
           this.offset = update.update_id + 1;
           this.handleUpdate(update).catch(e => console.error("[telegram] handler error:", e));
         }
-      } catch (err) {
-        console.error("[telegram] poll fetch error:", err);
-        await new Promise(r => setTimeout(r, 3000));
+      } catch (err: any) {
+        pollBackoff = Math.min(pollBackoff + 1, 6);
+        const delay = Math.min(3000 * Math.pow(2, pollBackoff), 120000);
+        console.warn(`[telegram] poll error (retry in ${delay / 1000}s): ${err.cause?.code || err.message || "unknown"}`);
+        await new Promise(r => setTimeout(r, delay));
       }
     }
   }
@@ -380,9 +395,8 @@ export class TelegramAdapter implements Adapter {
     await this.reply(chatId, t(this.locale, "auto_starting", { id: task.id, desc: task.description }));
     try {
       console.log(`[telegram] auto-task #${task.id} for ${task.user_id}`);
-      const res = this.maxParallel > 1
-        ? await this.engine.runParallel(task.user_id, task.description, "telegram", task.chat_id, undefined, 0)
-        : await this.engine.runStream(task.user_id, task.description, "telegram", task.chat_id, undefined, 0);
+      // Always use runParallel for auto-tasks: fresh session, no user session pollution
+      const res = await this.engine.runParallel(task.user_id, task.description, "telegram", task.chat_id, undefined, 0);
       if (res.timedOut) {
         this.store.markTaskResult(task.id, "failed");
         if (res.text) this.store.setTaskResult(task.id, res.text.slice(0, 10000));

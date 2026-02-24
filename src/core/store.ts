@@ -66,10 +66,19 @@ export class Store {
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)");
 
     // Startup recovery: reset orphaned 'running' tasks back to 'auto' so they get re-executed
-    const recovered = this.db.prepare("UPDATE tasks SET status = 'auto' WHERE status = 'running'").run();
-    if (recovered.changes > 0) {
-      console.log(`[store] recovered ${recovered.changes} orphaned running task(s) back to auto queue`);
+    const orphaned = this.db.prepare("SELECT id, description FROM tasks WHERE status = 'running'").all() as { id: number; description: string }[];
+    for (const t of orphaned) {
+      const desc = t.description.startsWith("[recovered]") ? t.description : `[recovered] Check current state before making changes — previous attempt was interrupted. Original task: ${t.description}`;
+      this.db.prepare("UPDATE tasks SET status = 'auto', description = ? WHERE id = ?").run(desc, t.id);
     }
+    if (orphaned.length > 0) {
+      console.log(`[store] recovered ${orphaned.length} orphaned running task(s) back to auto queue`);
+    }
+
+    // Startup cleanup: prune history/usage older than 30 days
+    const cutoff = Date.now() - 30 * 86400000;
+    this.db.prepare("DELETE FROM history WHERE created_at < ?").run(cutoff);
+    this.db.prepare("DELETE FROM usage WHERE created_at < ?").run(cutoff);
   }
 
   // --- sessions ---

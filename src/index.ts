@@ -63,6 +63,12 @@ async function main() {
     try {
       config = reloadConfig();
       engine.reloadConfig(config);
+      for (const a of adapters) {
+        if ('reloadConfig' in a && typeof a.reloadConfig === 'function') {
+          const plat = a.constructor.name === 'TelegramAdapter' ? config.platforms.telegram : config.platforms.discord;
+          a.reloadConfig(plat, config.locale);
+        }
+      }
       console.log("[claudebridge] config reloaded (SIGHUP)");
     } catch (err) {
       console.error("[claudebridge] config reload failed:", err);
@@ -77,6 +83,12 @@ async function main() {
       try {
         config = reloadConfig();
         engine.reloadConfig(config);
+        for (const a of adapters) {
+          if ('reloadConfig' in a && typeof a.reloadConfig === 'function') {
+            const plat = a.constructor.name === 'TelegramAdapter' ? config.platforms.telegram : config.platforms.discord;
+            a.reloadConfig(plat, config.locale);
+          }
+        }
         console.log("[claudebridge] config reloaded");
       } catch (err) {
         console.error("[claudebridge] config reload failed:", err);

@@ -378,6 +378,7 @@ export class AgentEngine {
     if (ep.model) args.push("--model", ep.model);
     const child = spawn("claude", args, { env, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end();
+    const killTimer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 60000);
     console.log(`[agent] auto-summary spawned pid=${child.pid} for ${userId}`);
     let result = "";
     let cost = 0;
@@ -400,6 +401,7 @@ export class AgentEngine {
     });
     child.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
     child.on("close", (code) => {
+      clearTimeout(killTimer);
       if (code !== 0) {
         console.warn(`[agent] auto-summary failed code=${code} stderr=${stderr.slice(0, 200)} for ${userId}`);
       }

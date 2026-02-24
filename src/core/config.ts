@@ -89,7 +89,7 @@ export function loadConfig(path?: string): Config {
     endpoints: raw.endpoints || [],
     agent: {
       ...raw.agent,
-      timeout_seconds: raw.agent?.timeout_seconds ?? 300,
+      timeout_seconds: raw.agent?.timeout_seconds ?? 0,
       max_parallel: raw.agent?.max_parallel ?? 1,
       memory: { enabled: true, auto_summary: true, max_memories: 50, ...raw.agent?.memory },
       skill: { enabled: true, ...raw.agent?.skill },

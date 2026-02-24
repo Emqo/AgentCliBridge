@@ -17,6 +17,7 @@ export class EndpointRotator {
   }
 
   next(): Endpoint {
+    if (!this.endpoints.length) throw new Error("No endpoints configured");
     const now = Date.now();
     const len = this.endpoints.length;
     for (let i = 0; i < len; i++) {

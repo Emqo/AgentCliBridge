@@ -23,6 +23,18 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
+function extractFlag(parts: string[], flag: string): string | null {
+  // Search from end to avoid matching flag text inside description
+  for (let i = parts.length - 2; i >= 0; i--) {
+    if (parts[i] === flag) {
+      const val = parts[i + 1];
+      parts.splice(i, 2);
+      return val;
+    }
+  }
+  return null;
+}
+
 if (category === "memory") {
   if (action === "add") {
     const [userId, ...contentParts] = rest;
@@ -88,41 +100,20 @@ if (category === "memory") {
   if (action === "add") {
     const [userId, platform, chatId, ...descParts] = rest;
     if (!userId || !platform || !chatId || !descParts.length) fail("Usage: auto add <user_id> <platform> <chat_id> <description> [--parent <id>]");
-    // Parse optional --parent flag
-    let parentId: number | null = null;
-    const parentIdx = descParts.indexOf("--parent");
-    if (parentIdx !== -1 && descParts[parentIdx + 1]) {
-      parentId = parseInt(descParts[parentIdx + 1]);
-      descParts.splice(parentIdx, 2);
-    }
-    // Parse optional --delay flag
-    let scheduledAt: number | null = null;
-    const delayIdx = descParts.indexOf("--delay");
-    if (delayIdx !== -1 && descParts[delayIdx + 1]) {
-      const delayMin = parseInt(descParts[delayIdx + 1]);
-      scheduledAt = Date.now() + delayMin * 60000;
-      descParts.splice(delayIdx, 2);
-    }
+    const parentRaw = extractFlag(descParts, "--parent");
+    const parentId = parentRaw ? parseInt(parentRaw) : null;
+    const delayRaw = extractFlag(descParts, "--delay");
+    const scheduledAt = delayRaw ? Date.now() + parseInt(delayRaw) * 60000 : null;
     const desc = descParts.join(" ");
     const r = db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, parent_id, scheduled_at, created_at) VALUES (?, ?, ?, ?, 'auto', ?, ?, ?)").run(userId, platform, chatId, desc, parentId, scheduledAt, Date.now());
     output({ ok: true, id: Number(r.lastInsertRowid), scheduled_at: scheduledAt, message: scheduledAt ? `Auto task scheduled (in ${Math.ceil((scheduledAt - Date.now()) / 60000)} min)` : "Auto task queued" });
   } else if (action === "add-approval") {
     const [userId, platform, chatId, ...descParts] = rest;
     if (!userId || !platform || !chatId || !descParts.length) fail("Usage: auto add-approval <user_id> <platform> <chat_id> <description> [--parent <id>] [--delay <minutes>]");
-    let parentId: number | null = null;
-    const parentIdx = descParts.indexOf("--parent");
-    if (parentIdx !== -1 && descParts[parentIdx + 1]) {
-      parentId = parseInt(descParts[parentIdx + 1]);
-      descParts.splice(parentIdx, 2);
-    }
-    // Parse optional --delay flag
-    let scheduledAt: number | null = null;
-    const delayIdx = descParts.indexOf("--delay");
-    if (delayIdx !== -1 && descParts[delayIdx + 1]) {
-      const delayMin = parseInt(descParts[delayIdx + 1]);
-      scheduledAt = Date.now() + delayMin * 60000;
-      descParts.splice(delayIdx, 2);
-    }
+    const parentRaw = extractFlag(descParts, "--parent");
+    const parentId = parentRaw ? parseInt(parentRaw) : null;
+    const delayRaw = extractFlag(descParts, "--delay");
+    const scheduledAt = delayRaw ? Date.now() + parseInt(delayRaw) * 60000 : null;
     const desc = descParts.join(" ");
     const r = db.prepare("INSERT INTO tasks (user_id, platform, chat_id, description, status, parent_id, scheduled_at, created_at) VALUES (?, ?, ?, ?, 'approval_pending', ?, ?, ?)").run(userId, platform, chatId, desc, parentId, scheduledAt, Date.now());
     output({ ok: true, id: Number(r.lastInsertRowid), scheduled_at: scheduledAt, message: scheduledAt ? `Auto task queued for approval (scheduled in ${Math.ceil((scheduledAt - Date.now()) / 60000)} min)` : "Auto task queued for approval" });
