@@ -9,6 +9,8 @@ export interface SkillContext {
   chatId: string;
   platform: string;
   locale: string;
+  subSessionId?: string;
+  subSessionLabel?: string;
 }
 
 export function generateSkillDoc(ctx: SkillContext): string {
@@ -21,6 +23,7 @@ export function generateSkillDoc(ctx: SkillContext): string {
       ``,
       `你正在 ClaudeBridge 中运行，连接着 ${ctx.platform} 平台。`,
       `当前用户 ID: ${ctx.userId} | 聊天 ID: ${ctx.chatId} | 平台: ${ctx.platform}`,
+      ...(ctx.subSessionId ? [`当前子会话: ${ctx.subSessionId.slice(0, 8)} (话题: "${ctx.subSessionLabel || ""}")`] : []),
       ``,
       `你可以通过 Bash 工具调用以下命令来管理用户的记忆、任务、提醒和自动任务：`,
       ``,
@@ -131,6 +134,7 @@ export function generateSkillDoc(ctx: SkillContext): string {
     ``,
     `You are running inside ClaudeBridge, connected to the ${ctx.platform} platform.`,
     `Current user ID: ${ctx.userId} | Chat ID: ${ctx.chatId} | Platform: ${ctx.platform}`,
+    ...(ctx.subSessionId ? [`Current sub-session: ${ctx.subSessionId.slice(0, 8)} (topic: "${ctx.subSessionLabel || ""}")`] : []),
     ``,
     `You can use the Bash tool to call these commands to manage the user's memories, tasks, reminders, and auto-tasks:`,
     ``,

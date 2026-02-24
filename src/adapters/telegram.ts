@@ -4,6 +4,9 @@ import { Store } from "../core/store.js";
 import { reloadConfig, TelegramConfig } from "../core/config.js";
 import { toTelegramMarkdown } from "../core/markdown.js";
 import { t, getCommandDescriptions } from "../core/i18n.js";
+import { log as rootLog } from "../core/logger.js";
+
+const log = rootLog.child("telegram");
 
 const EDIT_INTERVAL = 1500;
 
@@ -55,7 +58,7 @@ export class TelegramAdapter implements Adapter {
         clearTimeout(timer);
         const json = await res.json();
         if (!json.ok) {
-          console.error(`[telegram] API error ${method}:`, json.description || json);
+          log.error("API error", { method, description: json.description });
           const err = new Error(json.description || `Telegram API error: ${method}`);
           (err as any).apiError = true;
           throw err;
@@ -68,11 +71,12 @@ export class TelegramAdapter implements Adapter {
     }
   }
 
-  private async reply(chatId: number, text: string, parseMode?: string): Promise<any> {
+  private async reply(chatId: number, text: string, parseMode?: string, replyToMsgId?: number): Promise<any> {
     return this.call("sendMessage", {
       chat_id: chatId,
       text,
       ...(parseMode ? { parse_mode: parseMode } : {}),
+      ...(replyToMsgId ? { reply_to_message_id: replyToMsgId } : {}),
     });
   }
 
@@ -105,12 +109,17 @@ export class TelegramAdapter implements Adapter {
 
     const groupId = msg.chat.type !== "private" ? String(chatId) : undefined;
     if (!this.engine.access.isAllowed(String(uid), groupId)) {
-      console.log(`[telegram] user ${uid} not allowed`);
+      log.info("user not allowed", { uid });
       return;
     }
 
     const text = (msg.text || "").trim();
-    console.log(`[telegram] ${uid}: ${text.slice(0, 50)}`);
+    log.debug("message", { uid, text: text.slice(0, 50) });
+
+    // Extract reply-to message ID for session routing
+    const replyToMsgId = msg.reply_to_message?.message_id
+      ? String(msg.reply_to_message.message_id)
+      : undefined;
 
     // Management commands
     if (text === "/start" || text === "/help") {
@@ -118,6 +127,9 @@ export class TelegramAdapter implements Adapter {
       return;
     }
     if (text === "/new") {
+      if (this.engine.isMultiSessionEnabled()) {
+        this.engine.getSessionManager().closeAll(String(uid));
+      }
       this.store.clearSession(String(uid));
       await this.reply(chatId, t(this.locale, "session_cleared"));
       return;
@@ -154,6 +166,10 @@ export class TelegramAdapter implements Adapter {
       await this.handleStatusCommand(chatId, String(uid));
       return;
     }
+    if (text === "/sessions") {
+      await this.handleSessionsCommand(chatId, String(uid));
+      return;
+    }
 
     // File upload
     if (msg.document || msg.photo) {
@@ -171,13 +187,13 @@ export class TelegramAdapter implements Adapter {
         const ws = this.engine.getWorkDir(String(uid));
         writeFileSync(join(ws, fileName), buf);
         const prompt = msg.caption || `Analyze the uploaded file: ${fileName}`;
-        await this.handlePrompt(chatId, String(uid), prompt);
+        await this.handlePrompt(chatId, String(uid), prompt, replyToMsgId);
       } catch (e: any) { await this.reply(chatId, t(this.locale, "upload_failed") + e.message); }
       return;
     }
 
     // Text message — send to Claude (skill system handles intents)
-    if (text) await this.handlePrompt(chatId, String(uid), text);
+    if (text) await this.handlePrompt(chatId, String(uid), text, replyToMsgId);
   }
 
   private pageKeyboard(chatId: number, msgId: number, cur: number, total: number) {
@@ -252,7 +268,44 @@ export class TelegramAdapter implements Adapter {
     await answer();
   }
 
-  private async handlePrompt(chatId: number, uid: string, text: string) {
+  private async handlePrompt(chatId: number, uid: string, text: string, replyToMsgId?: string) {
+    // Multi-session mode: route and execute concurrently (no global lock check)
+    if (this.engine.isMultiSessionEnabled()) {
+      const placeholder = await this.reply(chatId, t(this.locale, "thinking"));
+      const msgId = placeholder.message_id;
+      let lastEdit = 0;
+
+      try {
+        log.info("running claude (multi-session)", { uid });
+        const res = await this.engine.handleUserMessage(uid, text, "telegram", String(chatId), replyToMsgId,
+          async (_chunk: string, full: string) => {
+            const now = Date.now();
+            if (now - lastEdit < EDIT_INTERVAL) return;
+            lastEdit = now;
+            const preview = full.slice(-3500) + "\n\n...";
+            await this.editMsg(chatId, msgId, preview);
+          }
+        );
+        log.info("claude done", { uid, session: res.subSessionId?.slice(0, 8), cost: res.cost?.toFixed(4) });
+
+        // Track response message → sub-session mapping for future reply-to routing
+        if (res.subSessionId) {
+          this.engine.getSessionManager().trackMessage(String(msgId), String(chatId), res.subSessionId);
+        }
+
+        // Check if user has multiple active sessions — add label prefix
+        const activeSessions = this.engine.getSessionManager().getActive(uid, "telegram");
+        const labelPrefix = activeSessions.length > 1 && res.label ? `[${res.label.slice(0, 30)}]\n` : "";
+
+        await this.sendFormattedResponse(chatId, msgId, res.text, labelPrefix);
+      } catch (err: any) {
+        log.error("claude error", { error: err?.message });
+        await this.editMsg(chatId, msgId, `Error: ${err.message || "unknown"}`);
+      }
+      return;
+    }
+
+    // Legacy single-session mode (session.enabled: false)
     if (this.engine.isLocked(uid)) {
       await this.reply(chatId, t(this.locale, "still_processing"));
       return;
@@ -262,7 +315,7 @@ export class TelegramAdapter implements Adapter {
     let lastEdit = 0;
 
     try {
-      console.log(`[telegram] running claude for ${uid}...`);
+      log.info("running claude", { uid });
       const res = await this.engine.runStream(uid, text, "telegram", String(chatId),
         async (_chunk: string, full: string) => {
           const now = Date.now();
@@ -272,62 +325,64 @@ export class TelegramAdapter implements Adapter {
           await this.editMsg(chatId, msgId, preview);
         }
       );
-      console.log(`[telegram] claude done for ${uid}, cost=$${res.cost?.toFixed(4)}`);
+      log.info("claude done", { uid, cost: res.cost?.toFixed(4) });
 
-      const maxLen = this.config.chunk_size || 4000;
-      const md = toTelegramMarkdown(res.text);
-      const mdChunks = chunkText(md, maxLen);
-      const rawChunks = chunkText(res.text, maxLen);
+      await this.sendFormattedResponse(chatId, msgId, res.text);
+    } catch (err: any) {
+      log.error("claude error", { error: err?.message });
+      await this.editMsg(chatId, msgId, `Error: ${err.message || "unknown"}`);
+    }
+  }
 
-      if (mdChunks.length <= 1) {
-        // Single page — no pagination needed
-        try {
-          await this.editMsg(chatId, msgId, mdChunks[0], "MarkdownV2");
-        } catch {
-          await this.editMsg(chatId, msgId, res.text);
-        }
-      } else {
-        // Multi-page — store pages and show inline keyboard
-        const key = `${chatId}:${msgId}`;
-        // Evict oldest if too many pages cached
-        if (this.pages.size >= 50) {
-          const oldest = this.pages.keys().next().value!;
-          this.pages.delete(oldest);
-        }
-        this.pages.set(key, { chunks: mdChunks, raw: rawChunks, ts: Date.now() });
-        setTimeout(() => this.pages.delete(key), TelegramAdapter.PAGE_TTL);
+  /** Format and send a response with MarkdownV2 + pagination support */
+  private async sendFormattedResponse(chatId: number, msgId: number, text: string, labelPrefix: string = ""): Promise<void> {
+    const maxLen = this.config.chunk_size || 4000;
+    const fullText = labelPrefix + text;
+    const md = toTelegramMarkdown(fullText);
+    const mdChunks = chunkText(md, maxLen);
+    const rawChunks = chunkText(fullText, maxLen);
 
-        const keyboard = this.pageKeyboard(chatId, msgId, 0, mdChunks.length);
+    if (mdChunks.length <= 1) {
+      try {
+        await this.editMsg(chatId, msgId, mdChunks[0], "MarkdownV2");
+      } catch {
+        await this.editMsg(chatId, msgId, fullText);
+      }
+    } else {
+      const key = `${chatId}:${msgId}`;
+      if (this.pages.size >= 50) {
+        const oldest = this.pages.keys().next().value!;
+        this.pages.delete(oldest);
+      }
+      this.pages.set(key, { chunks: mdChunks, raw: rawChunks, ts: Date.now() });
+      setTimeout(() => this.pages.delete(key), TelegramAdapter.PAGE_TTL);
+
+      const keyboard = this.pageKeyboard(chatId, msgId, 0, mdChunks.length);
+      try {
+        await this.call("editMessageText", {
+          chat_id: chatId,
+          message_id: msgId,
+          text: mdChunks[0],
+          parse_mode: "MarkdownV2",
+          reply_markup: keyboard,
+        });
+      } catch {
         try {
           await this.call("editMessageText", {
             chat_id: chatId,
             message_id: msgId,
-            text: mdChunks[0],
-            parse_mode: "MarkdownV2",
+            text: rawChunks[0],
             reply_markup: keyboard,
           });
-        } catch {
-          // MarkdownV2 failed, fallback to raw text
-          try {
-            await this.call("editMessageText", {
-              chat_id: chatId,
-              message_id: msgId,
-              text: rawChunks[0],
-              reply_markup: keyboard,
-            });
-          } catch {}
-        }
+        } catch {}
       }
-    } catch (err: any) {
-      console.error("[telegram] claude error:", err);
-      await this.editMsg(chatId, msgId, `Error: ${err.message || "unknown"}`);
     }
   }
 
   async start(): Promise<void> {
     this.running = true;
     this.maxParallel = this.engine.getMaxParallel();
-    console.log(`[telegram] starting long polling... (max_parallel=${this.maxParallel})`);
+    log.info("starting long polling...", { maxParallel: this.maxParallel, multiSession: this.engine.isMultiSessionEnabled() });
     this.reminderTimer = setInterval(() => this.checkReminders(), 30000);
     this.autoTimer = setInterval(() => this.processAutoTasks(), 60000);
     this.approvalTimer = setInterval(() => this.checkApprovals(), 15000);
@@ -340,16 +395,16 @@ export class TelegramAdapter implements Adapter {
         const res = await fetch(`${this.api}/getUpdates?offset=${this.offset}&timeout=10`, { signal: ctrl.signal });
         clearTimeout(timer);
         const json = await res.json() as any;
-        if (!json.ok) { console.error("[telegram] poll error:", json); continue; }
+        if (!json.ok) { log.error("poll error", { response: json }); continue; }
         pollBackoff = 0; // reset on success
         for (const update of json.result) {
           this.offset = update.update_id + 1;
-          this.handleUpdate(update).catch(e => console.error("[telegram] handler error:", e));
+          this.handleUpdate(update).catch(e => log.error("handler error", { error: (e as any)?.message }));
         }
       } catch (err: any) {
         pollBackoff = Math.min(pollBackoff + 1, 6);
         const delay = Math.min(3000 * Math.pow(2, pollBackoff), 120000);
-        console.warn(`[telegram] poll error (retry in ${delay / 1000}s): ${err.cause?.code || err.message || "unknown"}`);
+        log.warn("poll error", { retryIn: delay / 1000, error: err.cause?.code || err.message || "unknown" });
         await new Promise(r => setTimeout(r, delay));
       }
     }
@@ -365,8 +420,8 @@ export class TelegramAdapter implements Adapter {
   private async registerCommands(): Promise<void> {
     try {
       await this.call("setMyCommands", { commands: getCommandDescriptions(this.locale) });
-      console.log("[telegram] commands registered");
-    } catch (e) { console.error("[telegram] failed to register commands:", e); }
+      log.info("commands registered");
+    } catch (e: any) { log.error("failed to register commands", { error: e?.message }); }
   }
 
   private async checkReminders(): Promise<void> {
@@ -376,7 +431,7 @@ export class TelegramAdapter implements Adapter {
         await this.reply(Number(r.chat_id), t(this.locale, "reminder_notify", { desc: r.description }));
         this.store.markReminderSent(r.id);
       }
-    } catch (e) { console.error("[telegram] reminder error:", e); }
+    } catch (e: any) { log.error("reminder error", { error: e?.message }); }
   }
 
   private async processAutoTasks(): Promise<void> {
@@ -394,7 +449,7 @@ export class TelegramAdapter implements Adapter {
     const chatId = Number(task.chat_id);
     await this.reply(chatId, t(this.locale, "auto_starting", { id: task.id, desc: task.description }));
     try {
-      console.log(`[telegram] auto-task #${task.id} for ${task.user_id}`);
+      log.info("auto-task starting", { taskId: task.id, userId: task.user_id });
       // Always use runParallel for auto-tasks: fresh session, no user session pollution
       const res = await this.engine.runParallel(task.user_id, task.description, "telegram", task.chat_id, undefined, 0);
       if (res.timedOut) {
@@ -466,7 +521,7 @@ export class TelegramAdapter implements Adapter {
         });
         this.store.markReminderSent(task.id); // reuse reminder_sent to avoid re-sending
       }
-    } catch (e) { console.error("[telegram] approval check error:", e); }
+    } catch (e: any) { log.error("approval check error", { error: e?.message }); }
   }
 
   private async handleApprovalCallback(cb: any): Promise<void> {
@@ -538,5 +593,24 @@ export class TelegramAdapter implements Adapter {
     const summary = stats.map(s => `${s.status}: ${s.count}`).join(" | ");
     const report = `${t(this.locale, "status_report")}\n${lines.join("\n")}\n\nSummary: ${summary}`;
     await this.reply(chatId, report);
+  }
+
+  private async handleSessionsCommand(chatId: number, userId: string): Promise<void> {
+    if (!this.engine.isMultiSessionEnabled()) {
+      await this.reply(chatId, "Multi-session mode is disabled.");
+      return;
+    }
+    const sessions = this.engine.getSessionManager().getActive(userId, "telegram");
+    if (!sessions.length) {
+      await this.reply(chatId, t(this.locale, "no_sessions"));
+      return;
+    }
+    const statusIcon: Record<string, string> = { active: "🟢", idle: "🟡", expired: "🔴", closed: "⚫" };
+    const lines = sessions.map(s => {
+      const ago = Math.round((Date.now() - s.lastActiveAt) / 60000);
+      const locked = this.engine.isSessionLocked(s.id) ? " [processing]" : "";
+      return `${statusIcon[s.status] || "⚪"} ${s.id.slice(0, 8)} "${s.label || "(no topic)"}" (${ago}min ago, ${s.messageCount} msgs, $${s.totalCost.toFixed(4)})${locked}`;
+    });
+    await this.reply(chatId, `${t(this.locale, "sessions_list")}\n${lines.join("\n")}`);
   }
 }

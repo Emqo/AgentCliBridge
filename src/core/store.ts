@@ -1,6 +1,9 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
+import { log as rootLog } from "./logger.js";
+
+const log = rootLog.child("store");
 
 const DEFAULT_DB_PATH = "./data/claudebridge.db";
 
@@ -9,8 +12,9 @@ export class Store {
   readonly dbPath: string;
 
   constructor(dbPath?: string) {
-    this.dbPath = resolve(dbPath || DEFAULT_DB_PATH);
-    mkdirSync(dirname(this.dbPath), { recursive: true });
+    const p = dbPath || DEFAULT_DB_PATH;
+    this.dbPath = p === ":memory:" ? p : resolve(p);
+    if (p !== ":memory:") mkdirSync(dirname(this.dbPath), { recursive: true });
     this.db = new Database(this.dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(`
@@ -57,6 +61,27 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id);
       CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id, status);
+      CREATE TABLE IF NOT EXISTS sub_sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        claude_session_id TEXT,
+        label TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL,
+        last_active_at INTEGER NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        total_cost REAL NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_subsess_user ON sub_sessions(user_id, platform, status);
+      CREATE TABLE IF NOT EXISTS sub_session_messages (
+        platform_msg_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        sub_session_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (platform_msg_id, chat_id)
+      );
     `);
 
     // Schema migration: add parent_id, result, and scheduled_at columns
@@ -72,13 +97,36 @@ export class Store {
       this.db.prepare("UPDATE tasks SET status = 'auto', description = ? WHERE id = ?").run(desc, t.id);
     }
     if (orphaned.length > 0) {
-      console.log(`[store] recovered ${orphaned.length} orphaned running task(s) back to auto queue`);
+      log.info("recovered orphaned running tasks", { count: orphaned.length });
     }
 
     // Startup cleanup: prune history/usage older than 30 days
     const cutoff = Date.now() - 30 * 86400000;
     this.db.prepare("DELETE FROM history WHERE created_at < ?").run(cutoff);
     this.db.prepare("DELETE FROM usage WHERE created_at < ?").run(cutoff);
+
+    // Migrate legacy sessions → sub_sessions (one-time)
+    this._migrateFromLegacySessions();
+  }
+
+  private _migrateFromLegacySessions(): void {
+    const legacyCount = (this.db.prepare("SELECT COUNT(*) as c FROM sessions").get() as { c: number }).c;
+    const subCount = (this.db.prepare("SELECT COUNT(*) as c FROM sub_sessions").get() as { c: number }).c;
+    if (legacyCount > 0 && subCount === 0) {
+      const rows = this.db.prepare("SELECT user_id, session_id, platform, updated_at FROM sessions").all() as { user_id: string; session_id: string; platform: string; updated_at: number }[];
+      const crypto = require("crypto");
+      for (const row of rows) {
+        const id = crypto.randomUUID();
+        this.db.prepare(
+          "INSERT INTO sub_sessions (id, user_id, platform, chat_id, claude_session_id, label, status, created_at, last_active_at, message_count, total_cost) VALUES (?, ?, ?, '', ?, 'main', 'active', ?, ?, 1, 0)"
+        ).run(id, row.user_id, row.platform, row.session_id, row.updated_at, row.updated_at);
+      }
+      log.info("migrated legacy sessions to sub_sessions", { count: rows.length });
+    }
+  }
+
+  close(): void {
+    this.db.close();
   }
 
   // --- sessions ---
@@ -165,29 +213,12 @@ export class Store {
     return Number(r.lastInsertRowid);
   }
 
-  getTasks(userId: string): { id: number; description: string; status: string; remind_at: number | null; created_at: number }[] {
-    return this.db.prepare("SELECT id, description, status, remind_at, created_at FROM tasks WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC").all(userId) as any[];
-  }
-
-  completeTask(taskId: number, userId: string): boolean {
-    const r = this.db.prepare("UPDATE tasks SET status = 'done' WHERE id = ? AND user_id = ? AND status = 'pending'").run(taskId, userId);
-    return r.changes > 0;
-  }
-
   getDueReminders(): { id: number; user_id: string; platform: string; chat_id: string; description: string }[] {
     return this.db.prepare("SELECT id, user_id, platform, chat_id, description FROM tasks WHERE status = 'pending' AND remind_at IS NOT NULL AND remind_at <= ? AND reminder_sent = 0").all(Date.now()) as any[];
   }
 
   markReminderSent(taskId: number): void {
     this.db.prepare("UPDATE tasks SET reminder_sent = 1 WHERE id = ?").run(taskId);
-  }
-
-  getNextAutoTask(platform?: string): { id: number; user_id: string; platform: string; chat_id: string; description: string } | null {
-    const now = Date.now();
-    if (platform) {
-      return (this.db.prepare("SELECT id, user_id, platform, chat_id, description FROM tasks WHERE status = 'auto' AND platform = ? AND (scheduled_at IS NULL OR scheduled_at <= ?) ORDER BY created_at ASC LIMIT 1").get(platform, now) as any) ?? null;
-    }
-    return (this.db.prepare("SELECT id, user_id, platform, chat_id, description FROM tasks WHERE status = 'auto' AND (scheduled_at IS NULL OR scheduled_at <= ?) ORDER BY created_at ASC LIMIT 1").get(now) as any) ?? null;
   }
 
   markTaskRunning(taskId: number): void {
@@ -258,5 +289,72 @@ export class Store {
 
   getRecentAutoTasks(platform: string, limit: number): { id: number; user_id: string; description: string; status: string; parent_id: number | null; scheduled_at: number | null; created_at: number }[] {
     return this.db.prepare("SELECT id, user_id, description, status, parent_id, scheduled_at, created_at FROM tasks WHERE platform = ? AND status IN ('auto','running','done','failed','approval_pending','cancelled') ORDER BY created_at DESC LIMIT ?").all(platform, limit) as any[];
+  }
+
+  // --- sub_sessions ---
+  createSubSession(id: string, userId: string, platform: string, chatId: string, label: string): void {
+    const now = Date.now();
+    this.db.prepare(
+      "INSERT INTO sub_sessions (id, user_id, platform, chat_id, claude_session_id, label, status, created_at, last_active_at, message_count, total_cost) VALUES (?, ?, ?, ?, NULL, ?, 'active', ?, ?, 0, 0)"
+    ).run(id, userId, platform, chatId, label, now, now);
+  }
+
+  getSubSession(id: string): { id: string; user_id: string; platform: string; chat_id: string; claude_session_id: string | null; label: string; status: string; created_at: number; last_active_at: number; message_count: number; total_cost: number } | null {
+    return (this.db.prepare("SELECT * FROM sub_sessions WHERE id = ?").get(id) as any) ?? null;
+  }
+
+  getActiveSubSessions(userId: string, platform: string): { id: string; user_id: string; platform: string; chat_id: string; claude_session_id: string | null; label: string; status: string; created_at: number; last_active_at: number; message_count: number; total_cost: number }[] {
+    return this.db.prepare("SELECT * FROM sub_sessions WHERE user_id = ? AND platform = ? AND status IN ('active','idle') ORDER BY last_active_at DESC").all(userId, platform) as any[];
+  }
+
+  touchSubSession(id: string): void {
+    this.db.prepare("UPDATE sub_sessions SET last_active_at = ?, message_count = message_count + 1, status = 'active' WHERE id = ?").run(Date.now(), id);
+  }
+
+  setSubSessionClaudeId(id: string, claudeSessionId: string): void {
+    this.db.prepare("UPDATE sub_sessions SET claude_session_id = ? WHERE id = ?").run(claudeSessionId, id);
+  }
+
+  updateSubSessionLabel(id: string, label: string): void {
+    this.db.prepare("UPDATE sub_sessions SET label = ? WHERE id = ?").run(label, id);
+  }
+
+  updateSubSessionCost(id: string, cost: number): void {
+    this.db.prepare("UPDATE sub_sessions SET total_cost = total_cost + ? WHERE id = ?").run(cost, id);
+  }
+
+  closeSubSession(id: string): void {
+    this.db.prepare("UPDATE sub_sessions SET status = 'closed' WHERE id = ?").run(id);
+  }
+
+  closeAllSubSessions(userId: string): void {
+    this.db.prepare("UPDATE sub_sessions SET status = 'closed' WHERE user_id = ? AND status IN ('active','idle')").run(userId);
+  }
+
+  expireIdleSessions(timeoutMs: number): number {
+    const cutoff = Date.now() - timeoutMs;
+    const r = this.db.prepare("UPDATE sub_sessions SET status = 'expired' WHERE status = 'active' AND last_active_at < ?").run(cutoff);
+    return r.changes;
+  }
+
+  trackSubSessionMessage(platformMsgId: string, chatId: string, subSessionId: string): void {
+    this.db.prepare(
+      "INSERT OR REPLACE INTO sub_session_messages (platform_msg_id, chat_id, sub_session_id, created_at) VALUES (?, ?, ?, ?)"
+    ).run(platformMsgId, chatId, subSessionId, Date.now());
+  }
+
+  getSubSessionByMessage(platformMsgId: string, chatId: string): string | null {
+    const row = this.db.prepare("SELECT sub_session_id FROM sub_session_messages WHERE platform_msg_id = ? AND chat_id = ?").get(platformMsgId, chatId) as { sub_session_id: string } | undefined;
+    return row?.sub_session_id ?? null;
+  }
+
+  pruneSubSessionMessages(maxAgeMs: number): number {
+    const cutoff = Date.now() - maxAgeMs;
+    const r = this.db.prepare("DELETE FROM sub_session_messages WHERE created_at < ?").run(cutoff);
+    return r.changes;
+  }
+
+  getAllSubSessions(userId: string): { id: string; user_id: string; platform: string; chat_id: string; claude_session_id: string | null; label: string; status: string; created_at: number; last_active_at: number; message_count: number; total_cost: number }[] {
+    return this.db.prepare("SELECT * FROM sub_sessions WHERE user_id = ? ORDER BY last_active_at DESC").all(userId) as any[];
   }
 }

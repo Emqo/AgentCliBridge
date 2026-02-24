@@ -141,8 +141,17 @@ if (category === "memory") {
   } else {
     fail("Usage: auto <add|add-approval|result|list|cancel|clear> ...");
   }
+} else if (category === "session") {
+  if (action === "list") {
+    const [userId] = rest;
+    if (!userId) fail("Usage: session list <user_id>");
+    const rows = db.prepare("SELECT id, user_id, platform, chat_id, claude_session_id, label, status, created_at, last_active_at, message_count, total_cost FROM sub_sessions WHERE user_id = ? ORDER BY last_active_at DESC").all(userId);
+    output({ ok: true, sessions: rows });
+  } else {
+    fail("Usage: session <list> ...");
+  }
 } else {
-  fail("Usage: claudebridge-ctl <memory|task|reminder|auto> <action> [args...]");
+  fail("Usage: claudebridge-ctl <memory|task|reminder|auto|session> <action> [args...]");
 }
 
 db.close();

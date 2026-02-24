@@ -1,12 +1,15 @@
 # Leave endpoints empty to use claude CLI's own authentication
 # 留空则直接使用 claude CLI 自身的认证配置
 endpoints: []
-#  - name: "default"
-#    base_url: ""
-#    api_key: "sk-your-api-key"
+#  - name: "claude-main"
+#    provider: "claude"
 #    model: "claude-sonnet-4-20250514"
+#  - name: "codex"
+#    provider: "codex"
+#    model: "o3-mini"
 
 locale: en  # "zh" for Chinese
+log_level: info  # debug | info | warn | error
 
 agent:
   allowed_tools:
@@ -30,6 +33,12 @@ agent:
     max_memories: 50
   skill:
     enabled: true
+  session:
+    enabled: true             # Enable multi-session (concurrent conversations per user)
+    max_per_user: 3           # Max concurrent sub-sessions per user
+    idle_timeout_minutes: 30  # Auto-close idle sub-sessions after this time
+    classifier_budget: 0.05   # Max budget for routing classifier (Tier 3)
+    classifier_model: ""      # Model for classifier (empty = use default)
 
 workspace:
   base_dir: "./workspaces"

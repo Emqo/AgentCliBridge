@@ -1,6 +1,6 @@
 {
   "name": "@emqo/claudebridge",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Bridge claude CLI to chat platforms (Telegram, Discord) with scheduled auto-tasks, autonomous project management, HITL approval, conditional branching, webhook triggers, parallel execution, and observability",
   "main": "dist/index.js",
   "bin": {
@@ -11,7 +11,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "claude",
@@ -40,14 +42,16 @@
     "discord.js": "^14.25.1",
     "dotenv": "^17.3.1",
     "ioredis": "^5.9.3",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/ioredis": "^4.28.10",
     "@types/node": "^25.3.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   },
   "overrides": {
     "undici": ">=6.23.0"

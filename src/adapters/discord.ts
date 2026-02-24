@@ -6,6 +6,9 @@ import { AgentEngine } from "../core/agent.js";
 import { Store } from "../core/store.js";
 import { reloadConfig, DiscordConfig } from "../core/config.js";
 import { t, getCommandDescriptions } from "../core/i18n.js";
+import { log as rootLog } from "../core/logger.js";
+
+const log = rootLog.child("discord");
 
 const EDIT_INTERVAL = 1500;
 
@@ -52,12 +55,18 @@ export class DiscordAdapter implements Adapter {
 
       const text = msg.content.replace(/<@!?\d+>/g, "").trim();
 
+      // Extract reply-to message ID for session routing
+      const replyToMsgId = msg.reference?.messageId || undefined;
+
       // Management commands
       if (text === "!help") {
         await msg.reply(t(this.locale, "help").replaceAll("/", "!"));
         return;
       }
       if (text === "!new") {
+        if (this.engine.isMultiSessionEnabled()) {
+          this.engine.getSessionManager().closeAll(msg.author.id);
+        }
         this.store.clearSession(msg.author.id);
         await msg.reply(t(this.locale, "session_cleared"));
         return;
@@ -120,6 +129,10 @@ export class DiscordAdapter implements Adapter {
         await this.handleStatusCommand(msg);
         return;
       }
+      if (text === "!sessions") {
+        await this.handleSessionsCommand(msg);
+        return;
+      }
 
       // File upload handling
       if (msg.attachments.size > 0) {
@@ -133,17 +146,55 @@ export class DiscordAdapter implements Adapter {
         }
         const names = [...msg.attachments.values()].map(a => a.name).join(", ");
         const prompt = text || `Analyze the uploaded file(s): ${names}`;
-        await this.handlePrompt(msg, prompt);
+        await this.handlePrompt(msg, prompt, replyToMsgId);
         return;
       }
 
       // Text message — send to Claude (skill system handles intents)
       if (!text) return;
-      await this.handlePrompt(msg, text);
+      await this.handlePrompt(msg, text, replyToMsgId);
     });
   }
 
-  private async handlePrompt(msg: Message, text: string) {
+  private async handlePrompt(msg: Message, text: string, replyToMsgId?: string) {
+    // Multi-session mode: route and execute concurrently
+    if (this.engine.isMultiSessionEnabled()) {
+      const placeholder = await msg.reply(t(this.locale, "thinking"));
+      let lastEdit = 0;
+      let lastText = "";
+
+      try {
+        const res = await this.engine.handleUserMessage(
+          msg.author.id, text, "discord", String(msg.channelId), replyToMsgId,
+          async (_chunk: string, full: string) => {
+            const now = Date.now();
+            if (now - lastEdit < EDIT_INTERVAL) return;
+            const preview = full.slice(-1900) + "\n\n...";
+            if (preview === lastText) return;
+            lastText = preview;
+            lastEdit = now;
+            try { await placeholder.edit(preview); } catch {}
+          }
+        );
+
+        // Track response message for reply-to routing
+        if (res.subSessionId) {
+          this.engine.getSessionManager().trackMessage(placeholder.id, String(msg.channelId), res.subSessionId);
+        }
+
+        // Add label prefix if multiple active sessions
+        const activeSessions = this.engine.getSessionManager().getActive(msg.author.id, "discord");
+        const labelPrefix = activeSessions.length > 1 && res.label ? `[${res.label.slice(0, 30)}]\n` : "";
+
+        await this.sendChunkedResponse(msg, placeholder, res.text, labelPrefix);
+      } catch (err: any) {
+        log.error("error", { error: err?.message });
+        try { await placeholder.edit(`Error: ${err.message || "unknown"}`); } catch {}
+      }
+      return;
+    }
+
+    // Legacy single-session mode
     if (this.engine.isLocked(msg.author.id)) {
       await msg.reply(t(this.locale, "still_processing"));
       return;
@@ -167,24 +218,29 @@ export class DiscordAdapter implements Adapter {
         }
       );
 
-      const maxLen = this.config.chunk_size || 1900;
-      const chunks = chunkText(res.text, maxLen);
-      try { await placeholder.edit(chunks[0]); } catch {}
-      for (let i = 1; i < chunks.length; i++) {
-        await msg.reply(chunks[i]);
-      }
+      await this.sendChunkedResponse(msg, placeholder, res.text);
     } catch (err: any) {
-      console.error("[discord] error:", err);
+      log.error("error", { error: err?.message });
       try { await placeholder.edit(`Error: ${err.message || "unknown"}`); } catch {}
     }
   }
 
+  /** Chunk text and send via edit + follow-up replies */
+  private async sendChunkedResponse(msg: Message, placeholder: Message, text: string, labelPrefix: string = ""): Promise<void> {
+    const maxLen = this.config.chunk_size || 1900;
+    const chunks = chunkText(labelPrefix + text, maxLen);
+    try { await placeholder.edit(chunks[0]); } catch {}
+    for (let i = 1; i < chunks.length; i++) {
+      await msg.reply(chunks[i]);
+    }
+  }
+
   async start(): Promise<void> {
-    console.log("[discord] starting bot...");
+    log.info("starting bot...");
     await this.client.login(this.config.token);
-    console.log(`[discord] logged in as ${this.client.user?.tag}`);
+    log.info("logged in", { tag: this.client.user?.tag });
     this.maxParallel = this.engine.getMaxParallel();
-    console.log(`[discord] max_parallel=${this.maxParallel}`);
+    log.info("ready", { maxParallel: this.maxParallel, multiSession: this.engine.isMultiSessionEnabled() });
     this.reminderTimer = setInterval(() => this.checkReminders(), 30000);
     this.autoTimer = setInterval(() => this.processAutoTasks(), 60000);
     this.approvalTimer = setInterval(() => this.checkApprovals(), 15000);
@@ -205,7 +261,7 @@ export class DiscordAdapter implements Adapter {
         if (ch?.isTextBased() && "send" in ch) await (ch as any).send(t(this.locale, "reminder_notify", { desc: r.description }));
         this.store.markReminderSent(r.id);
       }
-    } catch (e) { console.error("[discord] reminder error:", e); }
+    } catch (e: any) { log.error("reminder error", { error: e?.message }); }
   }
 
   private async processAutoTasks(): Promise<void> {
@@ -225,7 +281,7 @@ export class DiscordAdapter implements Adapter {
       if (!ch?.isTextBased() || !("send" in ch)) throw new Error("channel not found");
       const channel = ch as any;
       await channel.send(t(this.locale, "auto_starting", { id: task.id, desc: task.description }));
-      console.log(`[discord] auto-task #${task.id} for ${task.user_id}`);
+      log.info("auto-task starting", { taskId: task.id, userId: task.user_id });
       // Always use runParallel for auto-tasks: fresh session, no user session pollution
       const res = await this.engine.runParallel(task.user_id, task.description, "discord", task.chat_id, undefined, 0);
       if (res.timedOut) {
@@ -256,7 +312,7 @@ export class DiscordAdapter implements Adapter {
       }
     } catch (err: any) {
       this.store.markTaskResult(task.id, "failed");
-      console.error(`[discord] auto-task #${task.id} failed:`, err);
+      log.error("auto-task failed", { taskId: task.id, error: err?.message });
       // Self-healing: auto-retry failed tasks (max 3 retries)
       const retryMatch = task.description.match(/\[retry (\d+)\/3\]/);
       const retryCount = retryMatch ? parseInt(retryMatch[1]) : 0;
@@ -288,7 +344,7 @@ export class DiscordAdapter implements Adapter {
         }
         this.store.markReminderSent(task.id);
       }
-    } catch (e) { console.error("[discord] approval check error:", e); }
+    } catch (e: any) { log.error("approval check error", { error: e?.message }); }
   }
 
   private async handleStatusCommand(msg: Message): Promise<void> {
@@ -314,5 +370,24 @@ export class DiscordAdapter implements Adapter {
     const summary = stats.map(s => `${s.status}: ${s.count}`).join(" | ");
     const report = `${t(this.locale, "status_report")}\n${lines.join("\n")}\n\nSummary: ${summary}`;
     await msg.reply(report);
+  }
+
+  private async handleSessionsCommand(msg: Message): Promise<void> {
+    if (!this.engine.isMultiSessionEnabled()) {
+      await msg.reply("Multi-session mode is disabled.");
+      return;
+    }
+    const sessions = this.engine.getSessionManager().getActive(msg.author.id, "discord");
+    if (!sessions.length) {
+      await msg.reply(t(this.locale, "no_sessions"));
+      return;
+    }
+    const statusIcon: Record<string, string> = { active: "🟢", idle: "🟡", expired: "🔴", closed: "⚫" };
+    const lines = sessions.map(s => {
+      const ago = Math.round((Date.now() - s.lastActiveAt) / 60000);
+      const locked = this.engine.isSessionLocked(s.id) ? " [processing]" : "";
+      return `${statusIcon[s.status] || "⚪"} ${s.id.slice(0, 8)} "${s.label || "(no topic)"}" (${ago}min ago, ${s.messageCount} msgs, $${s.totalCost.toFixed(4)})${locked}`;
+    });
+    await msg.reply(`${t(this.locale, "sessions_list")}\n${lines.join("\n")}`);
   }
 }

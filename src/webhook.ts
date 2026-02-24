@@ -2,6 +2,9 @@ import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Store } from "./core/store.js";
 import { WebhookConfig, CronEntry } from "./core/config.js";
+import { log as rootLog } from "./core/logger.js";
+
+const log = rootLog.child("webhook");
 
 export class WebhookServer {
   private server: ReturnType<typeof createServer> | null = null;
@@ -16,7 +19,7 @@ export class WebhookServer {
   start(): void {
     this.server = createServer((req, res) => this.handleRequest(req, res));
     this.server.listen(this.config.port, () => {
-      console.log(`[webhook] HTTP server listening on port ${this.config.port}`);
+      log.info("HTTP server listening", { port: this.config.port });
     });
 
     // Start cron schedulers
@@ -25,13 +28,13 @@ export class WebhookServer {
       const timer = setInterval(() => {
         try {
           const id = this.store.addTask(entry.user_id, entry.platform, entry.chat_id, entry.description, undefined, true);
-          console.log(`[cron] created auto-task #${id}: ${entry.description}`);
+          log.info("cron created auto-task", { id, description: entry.description });
         } catch (e) {
-          console.error(`[cron] failed to create task:`, e);
+          log.error("cron failed to create task", { error: (e as any)?.message });
         }
       }, ms);
       this.cronTimers.push(timer);
-      console.log(`[cron] scheduled every ${entry.schedule_minutes}min: ${entry.description}`);
+      log.info("cron scheduled", { minutes: entry.schedule_minutes, description: entry.description });
     }
   }
 
@@ -103,7 +106,7 @@ export class WebhookServer {
         const event = req.headers["x-github-event"] as string || "unknown";
         const description = this.buildGitHubDescription(event, payload);
         const id = this.store.addTask(userId, platform, chatId, description, undefined, true);
-        console.log(`[webhook] github ${event} → auto-task #${id}`);
+        log.info("github webhook", { event, taskId: id });
         this.json(res, 201, { ok: true, id, event });
       } catch (e: any) {
         this.json(res, 400, { error: e.message || "Invalid payload" });

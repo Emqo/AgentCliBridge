@@ -9,11 +9,13 @@ import { TelegramAdapter } from "./adapters/telegram.js";
 import { DiscordAdapter } from "./adapters/discord.js";
 import { WebhookServer } from "./webhook.js";
 import { Adapter } from "./adapters/base.js";
+import { log, setLogLevel, LogLevel } from "./core/logger.js";
 
 async function main() {
   const _cfgIdx = process.argv.indexOf("--config");
   const _cfgPath = _cfgIdx !== -1 ? process.argv[_cfgIdx + 1] : undefined;
   let config = loadConfig(_cfgPath);
+  if (config.log_level) setLogLevel(config.log_level as LogLevel);
 
   // Derive DB path from config file directory (not CWD)
   const configDir = _cfgPath ? dirname(resolve(_cfgPath)) : process.cwd();
@@ -25,7 +27,7 @@ async function main() {
 
   if (config.platforms.telegram.enabled) {
     if (!config.platforms.telegram.token) {
-      console.error("[fatal] TELEGRAM_BOT_TOKEN not set");
+      log.error("TELEGRAM_BOT_TOKEN not set");
       process.exit(1);
     }
     adapters.push(new TelegramAdapter(engine, store, config.platforms.telegram, config.locale));
@@ -33,14 +35,14 @@ async function main() {
 
   if (config.platforms.discord.enabled) {
     if (!config.platforms.discord.token) {
-      console.error("[fatal] DISCORD_BOT_TOKEN not set");
+      log.error("DISCORD_BOT_TOKEN not set");
       process.exit(1);
     }
     adapters.push(new DiscordAdapter(engine, store, config.platforms.discord, config.locale));
   }
 
   if (!adapters.length) {
-    console.error("[fatal] no platform enabled");
+    log.error("no platform enabled");
     process.exit(1);
   }
 
@@ -52,13 +54,24 @@ async function main() {
 
   // --- Register signal handlers and hot-reload BEFORE starting adapters ---
   const shutdown = () => {
-    console.log("[claudebridge] shutting down...");
+    log.info("shutting down...");
     for (const a of adapters) a.stop();
     if (webhookServer) webhookServer.stop();
+    store.close();
     setTimeout(() => process.exit(0), 1000);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  process.on("uncaughtException", (err) => {
+    log.error("uncaught exception", { error: err.message, stack: err.stack });
+    shutdown();
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    log.error("unhandled rejection", { error: msg });
+  });
   process.on("SIGHUP", () => {
     try {
       config = reloadConfig();
@@ -69,9 +82,9 @@ async function main() {
           a.reloadConfig(plat, config.locale);
         }
       }
-      console.log("[claudebridge] config reloaded (SIGHUP)");
-    } catch (err) {
-      console.error("[claudebridge] config reload failed:", err);
+      log.info("config reloaded (SIGHUP)");
+    } catch (err: any) {
+      log.error("config reload failed", { error: err?.message });
     }
   });
 
@@ -89,24 +102,29 @@ async function main() {
             a.reloadConfig(plat, config.locale);
           }
         }
-        console.log("[claudebridge] config reloaded");
-      } catch (err) {
-        console.error("[claudebridge] config reload failed:", err);
+        log.info("config reloaded");
+      } catch (err: any) {
+        log.error("config reload failed", { error: err?.message });
       }
     }, 500); // debounce
   });
 
-  // --- Start adapters (fire-and-forget, they run infinite polling loops) ---
+  // --- Start adapters with crash recovery ---
   for (const a of adapters) {
     a.start().catch(err => {
-      console.error("[fatal] adapter crashed:", err);
-      process.exit(1);
+      log.error("adapter crashed, retry in 10s", { adapter: a.constructor.name, error: err?.message });
+      setTimeout(() => {
+        a.start().catch(err2 => {
+          log.error("adapter restart failed, exiting", { error: err2?.message });
+          process.exit(1);
+        });
+      }, 10000);
     });
   }
-  console.log(`[claudebridge] running with ${adapters.length} adapter(s)`);
+  log.info("running", { adapters: adapters.length });
 }
 
 main().catch((err) => {
-  console.error("[fatal]", err);
+  log.error("fatal", { error: err?.message });
   process.exit(1);
 });

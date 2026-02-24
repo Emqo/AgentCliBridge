@@ -1,6 +1,6 @@
 const messages: Record<string, Record<string, string>> = {
   en: {
-    help: "ClaudeBridge ready.\n\nManagement commands:\n/new - clear session\n/usage - your stats\n/allusage - all stats\n/history - recent chats\n/model - endpoints info\n/status - auto task status\n/reload - reload config\n/help - show this help\n\nJust chat naturally to manage memories, tasks, reminders, and more — Claude handles it all.",
+    help: "ClaudeBridge ready.\n\nManagement commands:\n/new - clear session\n/usage - your stats\n/allusage - all stats\n/history - recent chats\n/model - endpoints info\n/status - auto task status\n/sessions - active sessions\n/reload - reload config\n/help - show this help\n\nJust chat naturally to manage memories, tasks, reminders, and more — Claude handles it all.",
     session_cleared: "Session cleared.",
     no_usage: "No usage data.",
     no_history: "No history.",
@@ -23,9 +23,13 @@ const messages: Record<string, Record<string, string>> = {
     no_auto_tasks: "No auto tasks found.",
     status_report: "Auto Task Status:",
     chain_progress: "Chain #{id} progress: {done}/{total} done{cost}",
+    sessions_list: "Active sessions:",
+    no_sessions: "No active sessions.",
+    session_created: "New session created: {label}",
+    session_limit: "Session limit reached. Oldest idle session closed.",
   },
   zh: {
-    help: "ClaudeBridge 就绪。\n\n管理命令：\n/new - 清除会话\n/usage - 你的用量\n/allusage - 所有用量\n/history - 最近对话\n/model - 端点信息\n/status - 自动任务状态\n/reload - 重载配置\n/help - 显示帮助\n\n直接对话即可管理记忆、任务、提醒等 — Claude 会自动处理。",
+    help: "ClaudeBridge 就绪。\n\n管理命令：\n/new - 清除会话\n/usage - 你的用量\n/allusage - 所有用量\n/history - 最近对话\n/model - 端点信息\n/status - 自动任务状态\n/sessions - 活跃会话\n/reload - 重载配置\n/help - 显示帮助\n\n直接对话即可管理记忆、任务、提醒等 — Claude 会自动处理。",
     session_cleared: "会话已清除。",
     no_usage: "暂无用量数据。",
     no_history: "暂无历史记录。",
@@ -48,6 +52,10 @@ const messages: Record<string, Record<string, string>> = {
     no_auto_tasks: "暂无自动任务。",
     status_report: "自动任务状态：",
     chain_progress: "任务链 #{id} 进度：{done}/{total} 完成{cost}",
+    sessions_list: "活跃会话：",
+    no_sessions: "暂无活跃会话。",
+    session_created: "新会话已创建：{label}",
+    session_limit: "会话数已达上限，已关闭最旧的空闲会话。",
   },
 };
 
@@ -55,12 +63,12 @@ const commandDescriptions: Record<string, Record<string, string>> = {
   en: {
     new: "Clear session", usage: "Your usage stats", allusage: "All users usage",
     history: "Recent conversations", model: "Current model/endpoints", status: "Auto task status",
-    reload: "Reload config", help: "Show all commands",
+    sessions: "Active sessions", reload: "Reload config", help: "Show all commands",
   },
   zh: {
     new: "清除会话", usage: "你的用量", allusage: "所有用量",
     history: "最近对话", model: "端点信息", status: "自动任务状态",
-    reload: "重载配置", help: "显示帮助",
+    sessions: "活跃会话", reload: "重载配置", help: "显示帮助",
   },
 };
 
