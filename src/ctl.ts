@@ -141,6 +141,20 @@ if (category === "memory") {
   } else {
     fail("Usage: auto <add|add-approval|result|list|cancel|clear> ...");
   }
+} else if (category === "file") {
+  if (action === "send") {
+    const [userId, platform, chatId, filePath, ...captionParts] = rest;
+    if (!userId || !platform || !chatId || !filePath) fail("Usage: file send <user_id> <platform> <chat_id> <file_path> [caption...]");
+    const { resolve } = await import("path");
+    const { existsSync } = await import("fs");
+    const resolved = resolve(filePath);
+    if (!existsSync(resolved)) fail(`File not found: ${resolved}`);
+    const caption = captionParts.join(" ");
+    const r = db.prepare("INSERT INTO file_sends (user_id, platform, chat_id, file_path, caption, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)").run(userId, platform, chatId, resolved, caption, Date.now());
+    output({ ok: true, id: Number(r.lastInsertRowid), message: `File queued for sending: ${resolved}` });
+  } else {
+    fail("Usage: file <send> ...");
+  }
 } else if (category === "session") {
   if (action === "list") {
     const [userId] = rest;
@@ -151,7 +165,7 @@ if (category === "memory") {
     fail("Usage: session <list> ...");
   }
 } else {
-  fail("Usage: claudebridge-ctl <memory|task|reminder|auto|session> <action> [args...]");
+  fail("Usage: claudebridge-ctl <memory|task|reminder|auto|file|session> <action> [args...]");
 }
 
 db.close();

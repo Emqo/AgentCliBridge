@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Message } from "discord.js";
-import { writeFileSync } from "fs";
+import { writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { Adapter, chunkText } from "./base.js";
 import { AgentEngine } from "../core/agent.js";
@@ -17,6 +17,7 @@ export class DiscordAdapter implements Adapter {
   private reminderTimer?: ReturnType<typeof setInterval>;
   private autoTimer?: ReturnType<typeof setInterval>;
   private approvalTimer?: ReturnType<typeof setInterval>;
+  private fileSendTimer?: ReturnType<typeof setInterval>;
   private activeAutoTasks = 0;
   private maxParallel = 1;
 
@@ -244,12 +245,14 @@ export class DiscordAdapter implements Adapter {
     this.reminderTimer = setInterval(() => this.checkReminders(), 30000);
     this.autoTimer = setInterval(() => this.processAutoTasks(), 60000);
     this.approvalTimer = setInterval(() => this.checkApprovals(), 15000);
+    this.fileSendTimer = setInterval(() => this.checkFileSends(), 5000);
   }
 
   stop(): void {
     if (this.reminderTimer) clearInterval(this.reminderTimer);
     if (this.autoTimer) clearInterval(this.autoTimer);
     if (this.approvalTimer) clearInterval(this.approvalTimer);
+    if (this.fileSendTimer) clearInterval(this.fileSendTimer);
     this.client.destroy();
   }
 
@@ -389,5 +392,23 @@ export class DiscordAdapter implements Adapter {
       return `${statusIcon[s.status] || "⚪"} ${s.id.slice(0, 8)} "${s.label || "(no topic)"}" (${ago}min ago, ${s.messageCount} msgs, $${s.totalCost.toFixed(4)})${locked}`;
     });
     await msg.reply(`${t(this.locale, "sessions_list")}\n${lines.join("\n")}`);
+  }
+
+  private async checkFileSends(): Promise<void> {
+    try {
+      const pending = this.store.getPendingFileSends("discord");
+      for (const f of pending) {
+        if (!existsSync(f.file_path)) { this.store.markFileFailed(f.id); continue; }
+        try {
+          const ch = await this.client.channels.fetch(f.chat_id);
+          if (!ch?.isTextBased() || !("send" in ch)) { this.store.markFileFailed(f.id); continue; }
+          await (ch as any).send({ content: f.caption || undefined, files: [f.file_path] });
+          this.store.markFileSent(f.id);
+        } catch (err: any) {
+          log.error("file send error", { id: f.id, error: err?.message });
+          this.store.markFileFailed(f.id);
+        }
+      }
+    } catch (e: any) { log.error("checkFileSends error", { error: e?.message }); }
   }
 }

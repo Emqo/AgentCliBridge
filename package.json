@@ -1,6 +1,6 @@
 {
   "name": "@emqo/claudebridge",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Bridge claude CLI to chat platforms (Telegram, Discord) with scheduled auto-tasks, autonomous project management, HITL approval, conditional branching, webhook triggers, parallel execution, and observability",
   "main": "dist/index.js",
   "bin": {

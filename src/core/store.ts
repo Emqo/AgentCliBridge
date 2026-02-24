@@ -75,6 +75,17 @@ export class Store {
         message_count INTEGER NOT NULL DEFAULT 0,
         total_cost REAL NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS file_sends (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        caption TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_sends_status ON file_sends(platform, status);
       CREATE INDEX IF NOT EXISTS idx_subsess_user ON sub_sessions(user_id, platform, status);
       CREATE TABLE IF NOT EXISTS sub_session_messages (
         platform_msg_id TEXT NOT NULL,
@@ -365,5 +376,23 @@ export class Store {
 
   getSubSessionSummaries(userId: string, platform: string): { id: string; label: string; summary: string; last_active_at: number }[] {
     return this.db.prepare("SELECT id, label, summary, last_active_at FROM sub_sessions WHERE user_id = ? AND platform = ? AND status IN ('active','idle') ORDER BY last_active_at DESC").all(userId, platform) as any[];
+  }
+
+  // --- file_sends ---
+  addFileSend(userId: string, platform: string, chatId: string, filePath: string, caption: string): number {
+    const r = this.db.prepare("INSERT INTO file_sends (user_id, platform, chat_id, file_path, caption, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)").run(userId, platform, chatId, filePath, caption, Date.now());
+    return Number(r.lastInsertRowid);
+  }
+
+  getPendingFileSends(platform: string): { id: number; user_id: string; platform: string; chat_id: string; file_path: string; caption: string }[] {
+    return this.db.prepare("SELECT id, user_id, platform, chat_id, file_path, caption FROM file_sends WHERE platform = ? AND status = 'pending'").all(platform) as any[];
+  }
+
+  markFileSent(id: number): void {
+    this.db.prepare("UPDATE file_sends SET status = 'sent' WHERE id = ?").run(id);
+  }
+
+  markFileFailed(id: number): void {
+    this.db.prepare("UPDATE file_sends SET status = 'failed' WHERE id = ?").run(id);
   }
 }

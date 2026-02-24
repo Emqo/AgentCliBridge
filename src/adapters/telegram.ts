@@ -1,4 +1,6 @@
 import { Adapter, chunkText } from "./base.js";
+import { existsSync, createReadStream } from "fs";
+import { basename, extname } from "path";
 import { AgentEngine } from "../core/agent.js";
 import { Store } from "../core/store.js";
 import { reloadConfig, TelegramConfig } from "../core/config.js";
@@ -22,6 +24,7 @@ export class TelegramAdapter implements Adapter {
   private reminderTimer?: ReturnType<typeof setInterval>;
   private autoTimer?: ReturnType<typeof setInterval>;
   private approvalTimer?: ReturnType<typeof setInterval>;
+  private fileSendTimer?: ReturnType<typeof setInterval>;
   private activeAutoTasks = 0;
   private maxParallel = 1;
   private pages = new Map<string, { chunks: string[]; raw: string[]; ts: number }>();
@@ -386,6 +389,7 @@ export class TelegramAdapter implements Adapter {
     this.reminderTimer = setInterval(() => this.checkReminders(), 30000);
     this.autoTimer = setInterval(() => this.processAutoTasks(), 60000);
     this.approvalTimer = setInterval(() => this.checkApprovals(), 15000);
+    this.fileSendTimer = setInterval(() => this.checkFileSends(), 5000);
     await this.registerCommands();
     let pollBackoff = 0;
     while (this.running) {
@@ -415,6 +419,7 @@ export class TelegramAdapter implements Adapter {
     if (this.reminderTimer) clearInterval(this.reminderTimer);
     if (this.autoTimer) clearInterval(this.autoTimer);
     if (this.approvalTimer) clearInterval(this.approvalTimer);
+    if (this.fileSendTimer) clearInterval(this.fileSendTimer);
   }
 
   private async registerCommands(): Promise<void> {
@@ -612,5 +617,33 @@ export class TelegramAdapter implements Adapter {
       return `${statusIcon[s.status] || "⚪"} ${s.id.slice(0, 8)} "${s.label || "(no topic)"}" (${ago}min ago, ${s.messageCount} msgs, $${s.totalCost.toFixed(4)})${locked}`;
     });
     await this.reply(chatId, `${t(this.locale, "sessions_list")}\n${lines.join("\n")}`);
+  }
+
+  private async checkFileSends(): Promise<void> {
+    try {
+      const pending = this.store.getPendingFileSends("telegram");
+      for (const f of pending) {
+        if (!existsSync(f.file_path)) { this.store.markFileFailed(f.id); continue; }
+        const chatId = Number(f.chat_id);
+        const ext = extname(f.file_path).toLowerCase();
+        const isPhoto = [".jpg", ".jpeg", ".png", ".gif"].includes(ext);
+        const method = isPhoto ? "sendPhoto" : "sendDocument";
+        const fieldName = isPhoto ? "photo" : "document";
+        try {
+          const form = new FormData();
+          form.append("chat_id", String(chatId));
+          const blob = new Blob([await import("fs").then(fs => fs.readFileSync(f.file_path))]);
+          form.append(fieldName, blob, basename(f.file_path));
+          if (f.caption) form.append("caption", f.caption);
+          const res = await fetch(`${this.api}/${method}`, { method: "POST", body: form });
+          const json = await res.json() as any;
+          if (json.ok) this.store.markFileSent(f.id);
+          else { log.error("file send API error", { id: f.id, desc: json.description }); this.store.markFileFailed(f.id); }
+        } catch (err: any) {
+          log.error("file send error", { id: f.id, error: err?.message });
+          this.store.markFileFailed(f.id);
+        }
+      }
+    } catch (e: any) { log.error("checkFileSends error", { error: e?.message }); }
   }
 }
