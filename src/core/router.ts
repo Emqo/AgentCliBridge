@@ -2,37 +2,40 @@ import { spawn } from "child_process";
 import { SessionManager, SubSession } from "./session.js";
 import { EndpointRotator } from "./keys.js";
 import { SessionConfig } from "./config.js";
+import { Store } from "./store.js";
 import { log as rootLog } from "./logger.js";
 
-const log = rootLog.child("router");
+const log = rootLog.child("dispatcher");
 
 export interface RouterDecision {
   action: "route" | "create";
-  subSessionId?: string;   // when action="route"
-  label?: string;           // when action="create"
+  subSessionId?: string;
+  label?: string;
 }
 
-export class SessionRouter {
+export class Dispatcher {
   constructor(
     private sessionMgr: SessionManager,
     private rotator: EndpointRotator,
-    private config: SessionConfig
+    private config: SessionConfig,
+    private store: Store
   ) {}
 
   /**
-   * 3-tier routing:
-   *   Tier 1: reply-to → direct route ($0)
-   *   Tier 2: 0-1 active sessions → bypass ($0)
-   *   Tier 3: 2+ active sessions → Claude classifier (~$0.002)
+   * Dispatch user message:
+   *   Fast path: reply-to → direct route ($0)
+   *   Fast path: 0 active → create ($0)
+   *   Fast path: 1 active → route ($0)
+   *   Classify: 2+ active → Claude classifier with memories + summaries
    */
-  async route(
+  async dispatch(
     userId: string,
     platform: string,
     chatId: string,
     messageText: string,
     replyToMsgId?: string
   ): Promise<RouterDecision> {
-    // Tier 1: reply-to routing
+    // Fast path: reply-to routing
     if (replyToMsgId) {
       const sessId = this.sessionMgr.getSessionByMessage(replyToMsgId, chatId);
       if (sessId) {
@@ -41,10 +44,9 @@ export class SessionRouter {
           return { action: "route", subSessionId: sessId };
         }
       }
-      // reply-to pointed to closed/expired session — fall through to Tier 2/3
     }
 
-    // Tier 2: 0-1 active sessions → direct
+    // Fast path: 0-1 active sessions
     const active = this.sessionMgr.getActive(userId, platform);
     if (active.length === 0) {
       return { action: "create", label: messageText.slice(0, 50) };
@@ -53,11 +55,11 @@ export class SessionRouter {
       return { action: "route", subSessionId: active[0].id };
     }
 
-    // Tier 3: 2+ sessions → Claude classifier
+    // 2+ sessions: classify with memories + summaries
     return await this._classify(userId, platform, messageText, active);
   }
 
-  /** Single-turn Claude call to classify which session a message belongs to */
+  /** Classify with user memories + sub-session summaries for context */
   private async _classify(
     userId: string,
     platform: string,
@@ -65,47 +67,67 @@ export class SessionRouter {
     sessions: SubSession[]
   ): Promise<RouterDecision> {
     try {
+      // Gather context
+      const memories = this.store.getMemories(userId);
+      const summaries = this.sessionMgr.getSummaries(userId, platform);
+
       const sessionList = sessions
         .map(s => {
           const ago = Math.round((Date.now() - s.lastActiveAt) / 60000);
-          return `[${s.id.slice(0, 8)}] "${s.label || "(no topic)"}" (${ago}min ago)`;
+          const sum = summaries.find(x => x.id === s.id);
+          const summaryText = sum?.summary ? ` | Summary: ${sum.summary}` : "";
+          return `[${s.id.slice(0, 8)}] "${s.label || "(no topic)"}" (${ago}min ago${summaryText})`;
         })
         .join("\n");
 
-      const prompt = `You are a message router. Active conversations:\n${sessionList}\n\nUser message: "${text.slice(0, 200)}"\n\nReply with ONLY the 8-char session ID to route to, or "new" for a new conversation. No explanation.`;
+      const memoryBlock = memories.length
+        ? `\nUser context:\n${memories.slice(0, 10).map(m => `- ${m.content}`).join("\n")}\n`
+        : "";
+
+      const prompt = `You are a message dispatcher. Route the user's message to the correct conversation, or decide to create a new one, or handle a management request.
+${memoryBlock}
+Active conversations:
+${sessionList}
+
+User message: "${text.slice(0, 300)}"
+
+Reply with ONLY one of:
+- An 8-char session ID to route to
+- "new" to create a new conversation
+
+No explanation.`;
 
       const result = await this._callClassifier(prompt);
-      const cleaned = result.trim().toLowerCase();
+      const cleaned = result.trim();
 
-      if (cleaned === "new") {
+      if (cleaned.toLowerCase() === "new") {
         return { action: "create", label: text.slice(0, 50) };
       }
 
       // Match against active sessions (first 8 chars of ID)
-      const match = sessions.find(s => s.id.slice(0, 8) === cleaned);
+      const match = sessions.find(s => s.id.slice(0, 8) === cleaned.toLowerCase());
       if (match) {
         return { action: "route", subSessionId: match.id };
       }
 
-      // Fallback: if classifier returned something unexpected, route to most recently active
+      // Fallback: route to most recently active
       log.warn("classifier returned unexpected, falling back", { result: cleaned });
       return { action: "route", subSessionId: sessions[0].id };
     } catch (err: any) {
-      // Classifier failed — fallback: create new session
       log.warn("classifier error, creating new session", { error: err.message });
       return { action: "create", label: text.slice(0, 50) };
     }
   }
 
-  /** Spawn claude CLI for single-turn classification (no tools, no session) */
+  /** Spawn claude CLI for single-turn classification */
   private _callClassifier(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
+      const budget = (this.config as any).dispatcher_budget ?? (this.config as any).classifier_budget ?? 0.05;
       const args = ["-p", prompt, "--output-format", "stream-json", "--max-turns", "1"];
-      if (this.config.classifier_budget) args.push("--max-budget-usd", String(this.config.classifier_budget));
+      if (budget) args.push("--max-budget-usd", String(budget));
       if (this.config.classifier_model) args.push("--model", this.config.classifier_model);
 
       const env: Record<string, string> = { ...process.env as Record<string, string> };
-      // Use the first available endpoint for the classifier model
       if (this.rotator.count) {
         const ep = this.rotator.next();
         if (!this.config.classifier_model && ep.model) args.push("--model", ep.model);
@@ -147,3 +169,6 @@ export class SessionRouter {
     });
   }
 }
+
+// Backward compatibility alias
+export { Dispatcher as SessionRouter };

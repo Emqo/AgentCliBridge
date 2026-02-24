@@ -85,10 +85,11 @@ export class Store {
       );
     `);
 
-    // Schema migration: add parent_id, result, and scheduled_at columns
+    // Schema migration: add parent_id, result, scheduled_at, and sub_session summary columns
     try { this.db.exec("ALTER TABLE tasks ADD COLUMN parent_id INTEGER"); } catch {}
     try { this.db.exec("ALTER TABLE tasks ADD COLUMN result TEXT"); } catch {}
     try { this.db.exec("ALTER TABLE tasks ADD COLUMN scheduled_at INTEGER"); } catch {}
+    try { this.db.exec("ALTER TABLE sub_sessions ADD COLUMN summary TEXT DEFAULT ''"); } catch {}
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)");
 
     // Startup recovery: reset orphaned 'running' tasks back to 'auto' so they get re-executed
@@ -356,5 +357,13 @@ export class Store {
 
   getAllSubSessions(userId: string): { id: string; user_id: string; platform: string; chat_id: string; claude_session_id: string | null; label: string; status: string; created_at: number; last_active_at: number; message_count: number; total_cost: number }[] {
     return this.db.prepare("SELECT * FROM sub_sessions WHERE user_id = ? ORDER BY last_active_at DESC").all(userId) as any[];
+  }
+
+  updateSubSessionSummary(id: string, summary: string): void {
+    this.db.prepare("UPDATE sub_sessions SET summary = ? WHERE id = ?").run(summary, id);
+  }
+
+  getSubSessionSummaries(userId: string, platform: string): { id: string; label: string; summary: string; last_active_at: number }[] {
+    return this.db.prepare("SELECT id, label, summary, last_active_at FROM sub_sessions WHERE user_id = ? AND platform = ? AND status IN ('active','idle') ORDER BY last_active_at DESC").all(userId, platform) as any[];
   }
 }

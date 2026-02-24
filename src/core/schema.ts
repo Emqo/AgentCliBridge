@@ -20,7 +20,7 @@ const SessionConfigSchema = z.object({
   enabled: z.boolean().default(true),
   max_per_user: z.number().int().positive().default(3),
   idle_timeout_minutes: z.number().positive().default(30),
-  classifier_budget: z.number().nonnegative().default(0.05),
+  dispatcher_budget: z.number().nonnegative().default(0.05),
   classifier_model: z.string().default(""),
 });
 

@@ -12,6 +12,7 @@ export interface SubSession {
   chatId: string;
   claudeSessionId: string | null;
   label: string;
+  summary: string;
   status: "active" | "idle" | "expired" | "closed";
   createdAt: number;
   lastActiveAt: number;
@@ -28,6 +29,7 @@ function toSubSession(row: any): SubSession {
     chatId: row.chat_id,
     claudeSessionId: row.claude_session_id ?? null,
     label: row.label,
+    summary: row.summary ?? "",
     status: row.status,
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,
@@ -126,5 +128,17 @@ export class SessionManager {
   /** Get all sub-sessions for a user (all statuses) */
   getAll(userId: string): SubSession[] {
     return this.store.getAllSubSessions(userId).map(toSubSession);
+  }
+
+  /** Update the summary of a sub-session */
+  updateSummary(sessionId: string, summary: string): void {
+    this.store.updateSubSessionSummary(sessionId, summary);
+  }
+
+  /** Get summaries of active sub-sessions for dispatcher context */
+  getSummaries(userId: string, platform: string): { id: string; label: string; summary: string; lastActiveAt: number }[] {
+    return this.store.getSubSessionSummaries(userId, platform).map(r => ({
+      id: r.id, label: r.label, summary: r.summary, lastActiveAt: r.last_active_at,
+    }));
   }
 }

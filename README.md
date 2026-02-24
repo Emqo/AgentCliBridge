@@ -38,6 +38,14 @@ Instead of hardcoded commands, ClaudeBridge injects a **skill document** into Cl
 - **Parallel Execution**: Multiple `claude` instances running simultaneously (`max_parallel` config)
 - **Observability**: `/status` command shows task queue, chain progress, and execution stats
 
+### v0.10.0: Dispatcher Architecture (Master-Worker Sessions)
+
+- **Dispatcher (Master Session)**: Every user has a single dispatcher that receives all messages and routes them to the correct sub-session. Users never interact with sub-sessions directly
+- **Intelligent Routing**: Fast path ($0) for 0-1 active sessions; Claude-powered classification with user memories + session summaries for 2+ sessions
+- **Session Summaries**: Each sub-session maintains an auto-generated summary, giving the dispatcher context about what each conversation is doing
+- **Memory-Aware Dispatch**: Dispatcher sees user memories + all active session summaries when classifying, enabling accurate routing even for ambiguous messages
+- **Concurrent Sub-Sessions**: Multiple sub-sessions execute in parallel with per-session locks
+
 ## Quick Start
 
 ### Global Install (npm)
@@ -91,6 +99,11 @@ agent:
     max_memories: 50
   skill:
     enabled: true
+  session:
+    enabled: true
+    max_per_user: 3
+    idle_timeout_minutes: 30
+    dispatcher_budget: 0.05
 
 workspace:
   base_dir: "./workspaces"
@@ -231,11 +244,13 @@ src/
   ctl.ts                  claudebridge-ctl: memory/task/reminder/auto ops via SQLite
   webhook.ts              HTTP server + GitHub webhooks + cron scheduler
   core/
-    agent.ts              Claude CLI subprocess spawner (runStream + runParallel)
+    agent.ts              Claude CLI subprocess spawner + session summary sync
     config.ts             YAML config with env fallback
     keys.ts               Endpoint round-robin with cooldown
-    lock.ts               Per-user concurrency mutex (Redis or in-memory)
+    lock.ts               Per-user/per-session concurrency mutex (Redis or in-memory)
     store.ts              SQLite (WAL): sessions, usage, history, memories, tasks
+    router.ts             Dispatcher: message routing with memories + session summaries
+    session.ts            Sub-session lifecycle management
     permissions.ts        Whitelist access control
     markdown.ts           Markdown → Telegram MarkdownV2
     i18n.ts               Internationalization (en/zh)
@@ -250,13 +265,16 @@ src/
 ### Data Flow
 
 ```
-User message → Adapter → Access check → Claude subprocess → Stream response back
-                                              ↓
-                                     Reads skill doc → calls ctl via Bash
-                                              ↓
-                                     SQLite: memories, tasks, reminders
-                                              ↓
-                                     Bridge timers: auto-execute, remind, approve
+User message → Adapter → Access check
+                              ↓
+                    Dispatcher (master session)
+                    ├─ Fast path: 0-1 sessions → direct route ($0)
+                    └─ Classify: 2+ sessions → Claude call (memories + summaries)
+                              ↓
+                    Sub-session execution (per-session lock)
+                    ├─ Inject memories + skill doc → spawn claude CLI
+                    ├─ Stream response back to adapter
+                    └─ Post: save history, sync summary, auto-summarize to shared memory
 ```
 
 ## Prerequisites
@@ -304,6 +322,14 @@ MIT
 - **Webhook 触发**：HTTP API + GitHub webhooks + 定时任务 — 从外部系统触发自动任务
 - **并行执行**：多个 `claude` 实例同时运行（`max_parallel` 配置）
 - **可观测性**：`/status` 命令显示任务队列、链路进度和执行统计
+
+### v0.10.0：Dispatcher 架构（主从会话）
+
+- **Dispatcher（主会话）**：每个用户有一个 Dispatcher 接收所有消息并路由到正确的子会话，用户无需感知子会话的存在
+- **智能路由**：0-1 个活跃会话走快速路径（$0）；2+ 个会话时 Claude 分类器携带用户记忆 + 会话摘要进行判断
+- **会话摘要**：每个子会话自动生成摘要，让 Dispatcher 了解每个对话在做什么
+- **记忆感知分发**：Dispatcher 分类时可见用户记忆 + 所有活跃会话摘要，即使模糊消息也能准确路由
+- **并发子会话**：多个子会话并行执行，per-session 锁保证安全
 
 ## 快速开始
 

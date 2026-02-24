@@ -9,7 +9,7 @@ import { EndpointRotator } from "./keys.js";
 import type { Endpoint } from "./schema.js";
 import { generateSkillDoc } from "../skills/bridge.js";
 import { SessionManager, SubSession } from "./session.js";
-import { SessionRouter, RouterDecision } from "./router.js";
+import { Dispatcher, RouterDecision } from "./router.js";
 import { log as rootLog } from "./logger.js";
 import { getProvider } from "../providers/registry.js";
 import type { Provider } from "../providers/base.js";
@@ -31,7 +31,7 @@ export class AgentEngine {
   private lock: SessionLock;
   private rotator: EndpointRotator;
   private sessionMgr: SessionManager;
-  private router: SessionRouter;
+  private dispatcher: Dispatcher;
   private sessionExpiryTimer?: ReturnType<typeof setInterval>;
   access: AccessControl;
 
@@ -48,7 +48,7 @@ export class AgentEngine {
     );
     this.rotator = new EndpointRotator(config.endpoints);
     this.sessionMgr = new SessionManager(store, config.agent.session);
-    this.router = new SessionRouter(this.sessionMgr, this.rotator, config.agent.session);
+    this.dispatcher = new Dispatcher(this.sessionMgr, this.rotator, config.agent.session, store);
 
     // Periodic idle session expiry (every 5 min)
     this.sessionExpiryTimer = setInterval(() => {
@@ -83,8 +83,8 @@ export class AgentEngine {
     return this.sessionMgr;
   }
 
-  getRouter(): SessionRouter {
-    return this.router;
+  getDispatcher(): Dispatcher {
+    return this.dispatcher;
   }
 
   getWorkDir(userId: string): string {
@@ -124,8 +124,8 @@ export class AgentEngine {
     onChunk?: StreamCallback,
     overrideTimeoutMs?: number
   ): Promise<AgentResponse> {
-    // 1. Route
-    const decision = await this.router.route(userId, platform, chatId, prompt, replyToMsgId);
+    // 1. Dispatch
+    const decision = await this.dispatcher.dispatch(userId, platform, chatId, prompt, replyToMsgId);
 
     // 2. Create or get sub-session
     let subSession: SubSession;
@@ -168,6 +168,9 @@ export class AgentEngine {
 
     // 6. Auto-summarize
     if (this.config.agent.memory?.auto_summary) this._autoSummarize(userId, prompt, res.text);
+
+    // 7. Sync sub-session summary for dispatcher context
+    this._syncSessionSummary(subSession, prompt, res.text);
 
     return { ...res, subSessionId: subSession.id, label: subSession.label };
   }
@@ -447,6 +450,41 @@ export class AgentEngine {
       userId, prompt, platform, chatId, ep, onChunk, memoryPrompt, overrideTimeoutMs,
       logLabel: "parallel", verbose: false,
     });
+  }
+
+  private _syncSessionSummary(subSession: SubSession, prompt: string, response: string): void {
+    const ep = this.rotator.count
+      ? this.rotator.next()
+      : { name: "default", provider: "claude", model: "" };
+    const summaryPrompt = `Summarize this conversation exchange in 1-2 sentences for a dispatcher that routes messages. Focus on the topic/task being discussed.\n\nUser: ${prompt.slice(0, 300)}\nAssistant: ${response.slice(0, 500)}`;
+    const args = ["-p", summaryPrompt, "--output-format", "stream-json", "--max-turns", "1", "--max-budget-usd", "0.02"];
+    if (ep.model) args.push("--model", ep.model);
+    const env: Record<string, string> = { ...process.env as Record<string, string> };
+    const child = spawn("claude", args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.end();
+    const killTimer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 30000);
+    let result = "";
+    let buffer = "";
+    child.stdout.on("data", (data: Buffer) => {
+      buffer += data.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === "result" && msg.result) result = msg.result;
+        } catch {}
+      }
+    });
+    child.on("close", () => {
+      clearTimeout(killTimer);
+      if (result && result.length > 0) {
+        this.sessionMgr.updateSummary(subSession.id, result.trim().slice(0, 200));
+        log.info("session summary synced", { sessionId: subSession.id.slice(0, 8) });
+      }
+    });
+    child.on("error", (err) => { log.warn("session summary error", { error: err.message }); });
   }
 
   private _autoSummarize(userId: string, prompt: string, response: string): void {
