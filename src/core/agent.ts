@@ -166,10 +166,10 @@ export class AgentEngine {
     }
 
     // 6. Auto-summarize
-    if (this.config.agent.memory?.auto_summary) this._autoSummarize(userId, prompt, res.text);
+    if (this.config.agent.memory?.auto_summary) this._autoSummarize(userId, prompt, res.text, onChunk);
 
     // 7. Sync sub-session summary for dispatcher context
-    this._syncSessionSummary(subSession, prompt, res.text);
+    this._syncSessionSummary(subSession, prompt, res.text, onChunk);
 
     return { ...res, subSessionId: subSession.id, label: subSession.label };
   }
@@ -460,7 +460,7 @@ export class AgentEngine {
     });
   }
 
-  private _syncSessionSummary(subSession: SubSession, prompt: string, response: string): void {
+  private _syncSessionSummary(subSession: SubSession, prompt: string, response: string, notify?: StreamCallback): void {
     const ep = this.rotator.count
       ? this.rotator.next()
       : { name: "default", provider: "claude", model: "" };
@@ -479,7 +479,11 @@ export class AgentEngine {
       child.stdin!.write(provider.getStdinPrompt(execOpts));
     }
     child.stdin!.end();
-    const killTimer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 30000);
+    const killTimer = setTimeout(() => {
+      try { child.kill("SIGTERM"); } catch {}
+      log.warn("session summary timed out", { sessionId: subSession.id.slice(0, 8) });
+      if (notify) notify("\n⏱ Session summary timed out", "");
+    }, 120000);
     let result = "";
     let buffer = "";
     let chunks = "";
@@ -500,12 +504,16 @@ export class AgentEngine {
       if (result && result.length > 0) {
         this.sessionMgr.updateSummary(subSession.id, result.trim().slice(0, 200));
         log.info("session summary synced", { sessionId: subSession.id.slice(0, 8) });
+        if (notify) notify("\n📋 Session summary saved", "");
       }
     });
-    child.on("error", (err) => { log.warn("session summary error", { error: err.message }); });
+    child.on("error", (err) => {
+      log.warn("session summary error", { error: err.message });
+      if (notify) notify(`\n⚠ Session summary error: ${err.message}`, "");
+    });
   }
 
-  private _autoSummarize(userId: string, prompt: string, response: string): void {
+  private _autoSummarize(userId: string, prompt: string, response: string, notify?: StreamCallback): void {
     const ep = this.rotator.count
       ? this.rotator.next()
       : { name: "default", provider: "claude", model: "" };
@@ -524,7 +532,11 @@ export class AgentEngine {
       child.stdin!.write(provider.getStdinPrompt(execOpts));
     }
     child.stdin!.end();
-    const killTimer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 60000);
+    const killTimer = setTimeout(() => {
+      try { child.kill("SIGTERM"); } catch {}
+      log.warn("auto-summary timed out", { userId });
+      if (notify) notify("\n⏱ Auto-summary timed out", "");
+    }, 120000);
     log.info("auto-summary spawned", { pid: child.pid, userId });
     let result = "";
     let cost = 0;
@@ -551,6 +563,7 @@ export class AgentEngine {
       if (!result && chunks) result = chunks.trim();
       if (code !== 0) {
         log.warn("auto-summary failed", { code, stderr: stderr.slice(0, 200), userId });
+        if (notify) notify(`\n⚠ Auto-summary failed (exit ${code})`, "");
       }
       if (cost > 0) {
         this.store.recordUsage(userId, "auto-summary", cost);
@@ -559,12 +572,17 @@ export class AgentEngine {
       if (result && !result.includes("NONE")) {
         const saved = this.store.addMemory(userId, result.trim(), "auto");
         this.store.trimMemories(userId, this.config.agent.memory?.max_memories || 50);
-        if (saved) log.info("auto-summary saved", { userId });
-        else log.info("auto-summary skipped (duplicate)", { userId });
+        if (saved) {
+          log.info("auto-summary saved", { userId });
+          if (notify) notify("\n🧠 Memory saved", "");
+        } else log.info("auto-summary skipped (duplicate)", { userId });
       } else {
         log.info("auto-summary result=NONE", { userId });
       }
     });
-    child.on("error", (err) => { log.warn("auto-summary spawn error", { error: err.message }); });
+    child.on("error", (err) => {
+      log.warn("auto-summary spawn error", { error: err.message });
+      if (notify) notify(`\n⚠ Auto-summary error: ${err.message}`, "");
+    });
   }
 }
