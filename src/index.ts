@@ -97,7 +97,7 @@ async function main() {
     const msg = reason instanceof Error ? reason.message : String(reason);
     log.error("unhandled rejection", { error: msg });
   });
-  process.on("SIGHUP", () => {
+  const doReload = (source: string) => {
     try {
       config = reloadConfig();
       engine.reloadConfig(config);
@@ -108,45 +108,37 @@ async function main() {
           a.reloadConfig(plat, config.locale);
         }
       }
-      log.info("config reloaded (SIGHUP)");
+      log.info("config reloaded", { source });
     } catch (err: any) {
       log.error("config reload failed", { error: err?.message });
     }
-  });
+  };
+
+  process.on("SIGHUP", () => doReload("SIGHUP"));
 
   // Hot reload config.yaml on file change
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
   watch(_cfgPath || "config.yaml", () => {
     if (reloadTimer) clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(() => {
-      try {
-        config = reloadConfig();
-        engine.reloadConfig(config);
-        setLogLevel((config.log?.level || config.log_level || "info") as LogLevel);
-        for (const a of adapters) {
-          if ('reloadConfig' in a && typeof a.reloadConfig === 'function') {
-            const plat = a.constructor.name === 'TelegramAdapter' ? config.platforms.telegram : config.platforms.discord;
-            a.reloadConfig(plat, config.locale);
-          }
-        }
-        log.info("config reloaded");
-      } catch (err: any) {
-        log.error("config reload failed", { error: err?.message });
-      }
-    }, 500); // debounce
+    reloadTimer = setTimeout(() => doReload("file-watch"), 500);
   });
 
   // --- Start adapters with crash recovery ---
   for (const a of adapters) {
-    a.start().catch(err => {
-      log.error("adapter crashed, retry in 10s", { adapter: a.constructor.name, error: err?.message });
-      setTimeout(() => {
-        a.start().catch(err2 => {
-          log.error("adapter restart failed, exiting", { error: err2?.message });
+    const startWithRetry = async (attempt = 0) => {
+      try {
+        await a.start();
+      } catch (err: any) {
+        if (attempt >= 2) {
+          log.error("adapter restart failed after 3 attempts, exiting", { adapter: a.constructor.name, error: err?.message });
           process.exit(1);
-        });
-      }, 10000);
-    });
+        }
+        const delay = Math.min(5000 * Math.pow(2, attempt), 60000);
+        log.error("adapter crashed, retrying", { adapter: a.constructor.name, attempt: attempt + 1, retryIn: delay / 1000, error: err?.message });
+        setTimeout(() => startWithRetry(attempt + 1), delay);
+      }
+    };
+    startWithRetry();
   }
   log.info("running", { adapters: adapters.length });
 }

@@ -10,7 +10,7 @@ describe("SessionManager", () => {
     store = new Store(":memory:");
     mgr = new SessionManager(store, {
       enabled: true, max_per_user: 3, idle_timeout_minutes: 30,
-      classifier_budget: 0.05, classifier_model: "",
+      dispatcher_budget: 0.05, classifier_model: "",
     });
   });
 

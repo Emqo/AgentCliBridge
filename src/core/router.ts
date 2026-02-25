@@ -125,7 +125,7 @@ No explanation.`;
   /** Spawn provider CLI for single-turn classification */
   private _callClassifier(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const budget = (this.config as any).dispatcher_budget ?? (this.config as any).classifier_budget ?? 0.05;
+      const budget = this.config.dispatcher_budget ?? 0.05;
       const ep = this.rotator.count
         ? this.rotator.next()
         : { name: "default", provider: "claude", model: "" };
@@ -149,6 +149,7 @@ No explanation.`;
       const timer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 15000);
 
       let result = "";
+      let chunks = "";
       let buffer = "";
       child.stdout!.on("data", (data: Buffer) => {
         buffer += data.toString();
@@ -157,6 +158,7 @@ No explanation.`;
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = provider.parseLine(line);
+          if (event.type === "text_chunk" && event.text) chunks += event.text;
           if (event.type === "result" && event.text) result = event.text;
         }
       });
@@ -166,6 +168,7 @@ No explanation.`;
 
       child.on("close", (code) => {
         clearTimeout(timer);
+        if (!result && chunks) result = chunks.trim();
         if (result) resolve(result);
         else reject(new Error(`classifier exited ${code}: ${stderr.slice(0, 200)}`));
       });

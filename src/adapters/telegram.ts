@@ -86,16 +86,20 @@ export class TelegramAdapter extends AdapterBase {
   }
 
   private async editMsg(chatId: number, msgId: number, text: string, parseMode?: string) {
+    // Try with parseMode first, fallback to plain text
+    if (parseMode) {
+      try {
+        await this.call("editMessageText", {
+          chat_id: chatId, message_id: msgId, text, parse_mode: parseMode,
+        });
+        return;
+      } catch {}
+    }
     try {
       await this.call("editMessageText", {
-        chat_id: chatId,
-        message_id: msgId,
-        text,
-        ...(parseMode ? { parse_mode: parseMode } : {}),
+        chat_id: chatId, message_id: msgId, text,
       });
-    } catch (e: any) {
-      if (parseMode) log.warn("editMsg failed", { parseMode, error: e?.message?.slice(0, 200) });
-    }
+    } catch {}
   }
 
   // ─── AdapterBase abstract implementations ───────────────────
@@ -368,8 +372,9 @@ export class TelegramAdapter extends AdapterBase {
               editCount++;
               const dots = ".".repeat((editCount % 3) + 1);
               const raw = full.length > 3500 ? full.slice(-3500) : full;
-              const preview = closeCodeFences(raw) + "\n\n" + dots;
-              await this.editMsg(chatId, msgId, preview);
+              const closed = closeCodeFences(raw);
+              const md = toTelegramMarkdown(closed) + "\n\n" + toTelegramMarkdown(dots);
+              await this.editMsg(chatId, msgId, md, "MarkdownV2");
             }
           );
           reqLog.info("claude done", { uid, session: res.subSessionId?.slice(0, 8), cost: res.cost?.toFixed(4) });
@@ -411,8 +416,9 @@ export class TelegramAdapter extends AdapterBase {
             editCount++;
             const dots = ".".repeat((editCount % 3) + 1);
             const raw = full.length > 3500 ? full.slice(-3500) : full;
-            const preview = closeCodeFences(raw) + "\n\n" + dots;
-            await this.editMsg(chatId, msgId, preview);
+            const closed = closeCodeFences(raw);
+            const md = toTelegramMarkdown(closed) + "\n\n" + toTelegramMarkdown(dots);
+            await this.editMsg(chatId, msgId, md, "MarkdownV2");
           }
         );
         reqLog.info("claude done", { uid, cost: res.cost?.toFixed(4) });
@@ -447,6 +453,10 @@ export class TelegramAdapter extends AdapterBase {
       }
     } else {
       const key = `${chatId}:${msgId}`;
+      // Prune expired entries before adding
+      for (const [k, v] of this.pages) {
+        if (Date.now() - v.ts > TelegramAdapter.PAGE_TTL) this.pages.delete(k);
+      }
       if (this.pages.size >= 50) {
         const oldest = this.pages.keys().next().value!;
         this.pages.delete(oldest);

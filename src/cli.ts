@@ -13,6 +13,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ENTRY = join(__dirname, "index.js");
 
+// ─── ANSI helpers ───
+const c = {
+  g: (s: string) => `\x1b[32m${s}\x1b[0m`,   // green
+  r: (s: string) => `\x1b[31m${s}\x1b[0m`,   // red
+  y: (s: string) => `\x1b[33m${s}\x1b[0m`,   // yellow
+  c: (s: string) => `\x1b[36m${s}\x1b[0m`,   // cyan
+  d: (s: string) => `\x1b[2m${s}\x1b[0m`,    // dim
+  b: (s: string) => `\x1b[1m${s}\x1b[0m`,    // bold
+};
+
 function ensureDir() { mkdirSync(DIR, { recursive: true }); }
 
 function readPid(): number | null {
@@ -29,7 +39,23 @@ function removePid() { try { unlinkSync(PID_FILE); } catch {} }
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
-  console.log("Usage: agent-cli-bridge (or acb) <start|stop|status|reload|init> [--config path] [--foreground|-f]");
+  console.log(`
+${c.b("AgentCliBridge")} ${c.d("— CLI AI Agent ↔ Chat Platform Bridge")}
+
+${c.y("Usage:")} acb ${c.c("<command>")} [options]
+
+${c.y("Commands:")}
+  ${c.c("start")}    Start the bridge ${c.d("(background by default)")}
+  ${c.c("stop")}     Stop the running bridge
+  ${c.c("status")}   Check if bridge is running
+  ${c.c("reload")}   Hot-reload config ${c.d("(SIGHUP)")}
+  ${c.c("init")}     Create config from template
+
+${c.y("Options:")}
+  ${c.c("--config")} <path>   Config file path
+  ${c.c("-f, --foreground")}  Run in foreground
+  ${c.c("-h, --help")}        Show this help
+`);
   process.exit(0);
 }
 const cmd = args.find(a => !a.startsWith("-")) || "start";
@@ -42,7 +68,7 @@ const DEFAULT_CFG = join(DIR, "config.yaml");
 switch (cmd) {
   case "start": {
     const existing = readPid();
-    if (existing) { console.log(`Already running (PID ${existing})`); process.exit(0); }
+    if (existing) { console.log(`${c.y("●")} Already running ${c.d(`(PID ${existing})`)}`); process.exit(0); }
     const resolvedCfg = cfgPath || DEFAULT_CFG;
     const childArgs = [ENTRY, "--config", resolvedCfg];
     if (!foreground) {
@@ -52,7 +78,7 @@ switch (cmd) {
       const child = spawn("node", childArgs, { detached: true, stdio: ["ignore", logFd, logFd] });
       child.unref();
       writePid(child.pid!);
-      console.log(`Started in background (PID ${child.pid}), log: ${LOG_FILE}`);
+      console.log(`${c.g("✔")} Started ${c.d(`(PID ${child.pid})`)}\n  ${c.d("Config:")} ${resolvedCfg}\n  ${c.d("Log:")}    ${LOG_FILE}`);
     } else {
       const child = spawn("node", childArgs, { stdio: "inherit" });
       writePid(child.pid!);
@@ -63,36 +89,36 @@ switch (cmd) {
   }
   case "stop": {
     const pid = readPid();
-    if (!pid) { console.log("Not running"); process.exit(1); }
+    if (!pid) { console.log(`${c.r("✖")} Not running`); process.exit(1); }
     process.kill(pid, "SIGTERM");
     removePid();
-    console.log(`Stopped (PID ${pid})`);
+    console.log(`${c.g("✔")} Stopped ${c.d(`(PID ${pid})`)}`);
     break;
   }
   case "status": {
     const pid = readPid();
-    if (pid) { console.log(`Running (PID ${pid})`); process.exit(0); }
-    else { console.log("Not running"); process.exit(1); }
+    if (pid) { console.log(`${c.g("●")} Running ${c.d(`(PID ${pid})`)}`); process.exit(0); }
+    else { console.log(`${c.r("●")} Not running`); process.exit(1); }
     break;
   }
   case "reload": {
     const pid = readPid();
-    if (!pid) { console.log("Not running"); process.exit(1); }
+    if (!pid) { console.log(`${c.r("✖")} Not running`); process.exit(1); }
     process.kill(pid, "SIGHUP");
-    console.log(`Reload signal sent (PID ${pid})`);
+    console.log(`${c.g("✔")} Reload signal sent ${c.d(`(PID ${pid})`)}`);
     break;
   }
   case "init": {
     ensureDir();
     const target = cfgPath || DEFAULT_CFG;
-    if (existsSync(target)) { console.log(`${target} already exists`); process.exit(0); }
+    if (existsSync(target)) { console.log(`${c.y("●")} ${target} already exists`); process.exit(0); }
     const example = join(__dirname, "..", "config.yaml.example");
-    if (!existsSync(example)) { console.error("config.yaml.example not found"); process.exit(1); }
+    if (!existsSync(example)) { console.error(`${c.r("✖")} config.yaml.example not found`); process.exit(1); }
     copyFileSync(example, target);
-    console.log(`Created ${target} from template`);
+    console.log(`${c.g("✔")} Created ${c.c(target)}`);
     break;
   }
   default:
-    console.log("Usage: agent-cli-bridge (or acb) <start|stop|status|reload|init> [--config path] [--foreground|-f]");
+    console.log(`${c.r("✖")} Unknown command: ${cmd}\n  Run ${c.c("acb --help")} for usage`);
     process.exit(1);
 }

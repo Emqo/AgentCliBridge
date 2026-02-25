@@ -102,6 +102,7 @@ export class Store {
     try { this.db.exec("ALTER TABLE tasks ADD COLUMN result TEXT"); } catch {}
     try { this.db.exec("ALTER TABLE tasks ADD COLUMN scheduled_at INTEGER"); } catch {}
     try { this.db.exec("ALTER TABLE sub_sessions ADD COLUMN summary TEXT DEFAULT ''"); } catch {}
+    try { this.db.exec("ALTER TABLE tasks ADD COLUMN started_at INTEGER"); } catch {}
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)");
 
     // Startup recovery: reset orphaned 'running' tasks back to 'auto' so they get re-executed
@@ -140,6 +141,10 @@ export class Store {
 
   close(): void {
     this.db.close();
+  }
+
+  pragma(cmd: string): unknown {
+    return this.db.pragma(cmd);
   }
 
   // --- sessions ---
@@ -241,7 +246,7 @@ export class Store {
   }
 
   markTaskRunning(taskId: number): void {
-    this.db.prepare("UPDATE tasks SET status = 'running' WHERE id = ?").run(taskId);
+    this.db.prepare("UPDATE tasks SET status = 'running', started_at = ? WHERE id = ?").run(Date.now(), taskId);
   }
 
   markTaskResult(taskId: number, status: string): void {
@@ -281,8 +286,7 @@ export class Store {
   /** Reset tasks stuck in 'running' state for longer than maxMs back to 'auto' */
   resetStuckTasks(maxMs: number): number {
     const cutoff = Date.now() - maxMs;
-    // Find tasks that have been running too long (using created_at as proxy since we don't track started_at)
-    const stuck = this.db.prepare("SELECT id, description FROM tasks WHERE status = 'running' AND created_at < ?").all(cutoff) as { id: number; description: string }[];
+    const stuck = this.db.prepare("SELECT id, description FROM tasks WHERE status = 'running' AND (started_at IS NOT NULL AND started_at < ? OR started_at IS NULL AND created_at < ?)").all(cutoff, cutoff) as { id: number; description: string }[];
     for (const t of stuck) {
       const desc = t.description.startsWith("[recovered]") ? t.description : `[recovered] Previous attempt timed out/stuck. Check current state before making changes. Original task: ${t.description}`;
       this.db.prepare("UPDATE tasks SET status = 'auto', description = ? WHERE id = ?").run(desc, t.id);

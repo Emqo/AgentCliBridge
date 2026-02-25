@@ -55,7 +55,7 @@ export class WebhookServer {
       const uptimeHours = (uptimeMs / 3600000).toFixed(2);
       let dbWritable = true;
       try {
-        this.store.recordUsage("_healthcheck", "system", 0);
+        this.store.pragma("integrity_check");
       } catch {
         dbWritable = false;
       }
@@ -181,10 +181,15 @@ export class WebhookServer {
     }
   }
 
-  private readBody(req: IncomingMessage): Promise<string> {
+  private readBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<string> {
     return new Promise((resolve, reject) => {
       let data = "";
-      req.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+      let bytes = 0;
+      req.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > maxBytes) { req.destroy(); reject(new Error("Request body too large")); return; }
+        data += chunk.toString();
+      });
       req.on("end", () => resolve(data));
       req.on("error", reject);
     });
