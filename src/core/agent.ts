@@ -292,7 +292,7 @@ export class AgentEngine {
 
       const timeoutMs = opts.overrideTimeoutMs !== undefined
         ? opts.overrideTimeoutMs
-        : (this.config.agent.timeout_seconds || 600) * 1000;
+        : (this.config.agent.timeout_seconds ?? 0) * 1000;
       const timer = timeoutMs > 0 ? setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, timeoutMs) : null;
 
       let fullText = "";
