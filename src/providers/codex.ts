@@ -2,11 +2,16 @@ import type { Provider, ProviderExecOpts, ProviderStreamEvent } from "./base.js"
 
 export class CodexProvider implements Provider {
   readonly binary = "codex";
-  readonly supportsSessionResume = false;
+  readonly supportsSessionResume = true;
   readonly supportsAppendSystemPrompt = false;
   readonly promptViaStdin = true;
 
   buildArgs(opts: ProviderExecOpts): string[] {
+    if (opts.resumeSessionId) {
+      const args = ["exec", "resume", opts.resumeSessionId, "-", "--json", "--dangerously-bypass-approvals-and-sandbox"];
+      if (opts.model) args.push("-m", opts.model);
+      return args;
+    }
     const args = ["exec", "-", "--json", "--dangerously-bypass-approvals-and-sandbox"];
     if (opts.model) args.push("-m", opts.model);
     return args;

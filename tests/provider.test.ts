@@ -63,7 +63,7 @@ describe("CodexProvider", () => {
 
   it("binary is codex", () => {
     expect(p.binary).toBe("codex");
-    expect(p.supportsSessionResume).toBe(false);
+    expect(p.supportsSessionResume).toBe(true);
     expect(p.supportsAppendSystemPrompt).toBe(false);
   });
 
@@ -74,6 +74,15 @@ describe("CodexProvider", () => {
     expect(args).toContain("-m");
     expect(args).toContain("o3-mini");
     expect(args[1]).toBe("-");
+  });
+
+  it("buildArgs uses exec resume when resumeSessionId provided", () => {
+    const args = p.buildArgs({ prompt: "hello", model: "o3-mini", resumeSessionId: "abc-123" });
+    expect(args[0]).toBe("exec");
+    expect(args[1]).toBe("resume");
+    expect(args[2]).toBe("abc-123");
+    expect(args[3]).toBe("-");
+    expect(args).toContain("--json");
   });
 
   it("getStdinPrompt prepends system context when appendSystemPrompt given", () => {
@@ -117,7 +126,7 @@ describe("GeminiProvider", () => {
 
   it("binary is gemini", () => {
     expect(p.binary).toBe("gemini");
-    expect(p.supportsSessionResume).toBe(false);
+    expect(p.supportsSessionResume).toBe(true);
     expect(p.supportsAppendSystemPrompt).toBe(false);
   });
 
@@ -129,6 +138,12 @@ describe("GeminiProvider", () => {
     expect(args).toContain("stream-json");
     expect(args).toContain("--model");
     expect(args).toContain("gemini-2.5-pro");
+  });
+
+  it("buildArgs includes resume flag when resumeSessionId provided", () => {
+    const args = p.buildArgs({ prompt: "hello", model: "", resumeSessionId: "sess-456" });
+    expect(args).toContain("-r");
+    expect(args).toContain("sess-456");
   });
 
   it("buildArgs prepends system context when appendSystemPrompt given", () => {

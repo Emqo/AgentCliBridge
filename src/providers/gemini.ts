@@ -2,7 +2,7 @@ import type { Provider, ProviderExecOpts, ProviderStreamEvent } from "./base.js"
 
 export class GeminiProvider implements Provider {
   readonly binary = "gemini";
-  readonly supportsSessionResume = false;
+  readonly supportsSessionResume = true;
   readonly supportsAppendSystemPrompt = false;
 
   buildArgs(opts: ProviderExecOpts): string[] {
@@ -14,6 +14,7 @@ export class GeminiProvider implements Provider {
     const args = ["-p", prompt, "--output-format", "stream-json"];
 
     if (opts.model) args.push("--model", opts.model);
+    if (opts.resumeSessionId) args.push("-r", opts.resumeSessionId);
 
     // Map permissionMode to Gemini's approval mode
     if (opts.permissionMode === "acceptEdits" || opts.permissionMode === "bypassPermissions") {

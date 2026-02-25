@@ -482,6 +482,7 @@ export class AgentEngine {
     const killTimer = setTimeout(() => { try { child.kill("SIGTERM"); } catch {} }, 30000);
     let result = "";
     let buffer = "";
+    let chunks = "";
     child.stdout!.on("data", (data: Buffer) => {
       buffer += data.toString();
       const lines = buffer.split("\n");
@@ -489,11 +490,13 @@ export class AgentEngine {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = provider.parseLine(line);
+        if (event.type === "text_chunk" && event.text) chunks += event.text + "\n";
         if (event.type === "result" && event.text) result = event.text;
       }
     });
     child.on("close", () => {
       clearTimeout(killTimer);
+      if (!result && chunks) result = chunks.trim();
       if (result && result.length > 0) {
         this.sessionMgr.updateSummary(subSession.id, result.trim().slice(0, 200));
         log.info("session summary synced", { sessionId: subSession.id.slice(0, 8) });
@@ -527,6 +530,7 @@ export class AgentEngine {
     let cost = 0;
     let buffer = "";
     let stderr = "";
+    let chunks = "";
     child.stdout!.on("data", (data: Buffer) => {
       buffer += data.toString();
       const lines = buffer.split("\n");
@@ -534,6 +538,7 @@ export class AgentEngine {
       for (const line of lines) {
         if (!line.trim()) continue;
         const event = provider.parseLine(line);
+        if (event.type === "text_chunk" && event.text) chunks += event.text + "\n";
         if (event.type === "result") {
           if (event.text) result = event.text;
           if (event.cost) cost = event.cost;
@@ -543,6 +548,7 @@ export class AgentEngine {
     child.stderr!.on("data", (data: Buffer) => { stderr += data.toString(); });
     child.on("close", (code) => {
       clearTimeout(killTimer);
+      if (!result && chunks) result = chunks.trim();
       if (code !== 0) {
         log.warn("auto-summary failed", { code, stderr: stderr.slice(0, 200), userId });
       }
