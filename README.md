@@ -61,6 +61,8 @@ agent-cli-bridge reload            # hot reload config
 agent-cli-bridge stop              # stop daemon
 ```
 
+Short aliases are also available: `acb` for `agent-cli-bridge`, `acb-ctl` for `agent-cli-bridge-ctl`.
+
 ### From Source
 
 ```bash
@@ -348,6 +350,8 @@ agent-cli-bridge status            # 查看运行状态
 agent-cli-bridge reload            # 热重载配置
 agent-cli-bridge stop              # 停止进程
 ```
+
+也可使用短命令：`acb` 代替 `agent-cli-bridge`，`acb-ctl` 代替 `agent-cli-bridge-ctl`。
 
 ### 从源码
 

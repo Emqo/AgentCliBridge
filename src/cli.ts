@@ -29,7 +29,7 @@ function removePid() { try { unlinkSync(PID_FILE); } catch {} }
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
-  console.log("Usage: agent-cli-bridge <start|stop|status|reload|init> [--config path] [--foreground|-f]");
+  console.log("Usage: agent-cli-bridge (or acb) <start|stop|status|reload|init> [--config path] [--foreground|-f]");
   process.exit(0);
 }
 const cmd = args.find(a => !a.startsWith("-")) || "start";
@@ -93,6 +93,6 @@ switch (cmd) {
     break;
   }
   default:
-    console.log("Usage: agent-cli-bridge <start|stop|status|reload|init> [--config path] [--foreground|-f]");
+    console.log("Usage: agent-cli-bridge (or acb) <start|stop|status|reload|init> [--config path] [--foreground|-f]");
     process.exit(1);
 }

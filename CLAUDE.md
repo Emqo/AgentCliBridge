@@ -58,8 +58,8 @@ Instead of hardcoded commands, `src/skills/bridge.ts` generates a bilingual skil
 ```
 src/
   index.ts                Entry: config loading, adapter startup, hot reload, signal handlers
-  cli.ts                  agent-cli-bridge CLI binary: start/stop/status/reload/init with PID/daemon
-  ctl.ts                  agent-cli-bridge-ctl: standalone SQLite ops (memory/task/reminder/auto)
+  cli.ts                  CLI binary (agent-cli-bridge / acb): start/stop/status/reload/init with PID/daemon
+  ctl.ts                  CLI tool (agent-cli-bridge-ctl / acb-ctl): standalone SQLite ops (memory/task/reminder/auto)
   webhook.ts              HTTP server + GitHub webhooks (HMAC-SHA256) + cron scheduler
   core/
     agent.ts              Spawns provider CLI subprocess, session dispatch, auto-summarize
@@ -73,7 +73,7 @@ src/
     permissions.ts        Whitelist access control (users + groups)
     markdown.ts           Markdown → Telegram MarkdownV2
     i18n.ts               Internationalization (en/zh)
-    logger.ts             Structured JSON logger with levels (debug/info/warn/error)
+    logger.ts             Structured JSON logger: file rotation, request tracing (rid), duration metrics, sensitive field redaction
   providers/
     base.ts               Provider interface (ProviderStreamEvent, ProviderExecOpts)
     claude.ts             Claude CLI provider
