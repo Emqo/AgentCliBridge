@@ -41,6 +41,12 @@ export class CodexProvider implements Provider {
         const cost = ((usage.input_tokens || 0) * 0.000003 + (usage.output_tokens || 0) * 0.000012);
         return { type: "result", cost: cost || undefined };
       }
+      if (msg.type === "turn.failed") {
+        return { type: "result", text: msg.error?.message || "turn failed", isError: true };
+      }
+      if (msg.type === "error" && msg.message) {
+        return { type: "text_chunk", text: `⚠ ${msg.message}` };
+      }
     } catch {}
     return { type: "unknown" };
   }
