@@ -15,6 +15,7 @@ const EDIT_INTERVAL = 1500;
 interface TgUpdate {
   update_id: number;
   message?: any;
+  edited_message?: any;
   callback_query?: any;
 }
 
@@ -162,7 +163,7 @@ export class TelegramAdapter extends AdapterBase {
       }
       return;
     }
-    const msg = update.message;
+    const msg = update.message || update.edited_message;
     if (!msg) return;
     const uid = msg.from?.id;
     const chatId = msg.chat.id;
