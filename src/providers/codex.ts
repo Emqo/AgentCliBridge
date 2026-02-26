@@ -49,7 +49,7 @@ export class CodexProvider implements Provider {
               const output = item.aggregated_output
                 ? "\n" + item.aggregated_output.slice(0, 500).replace(/```/g, "\\`\\`\\`")
                 : "";
-              return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${cmd}${exit}${output}\n\`\`\``, ephemeral: true };
+              return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${cmd}${exit}${output}\n\`\`\`` };
             }
             break;
           case "file_change":

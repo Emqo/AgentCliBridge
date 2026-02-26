@@ -65,7 +65,7 @@ export class ClaudeProvider implements Provider {
         for (const b of msg.message.content) {
           if (b.type === "tool_result" && typeof b.content === "string" && b.content.length > 0) {
             const safe = b.content.slice(0, 500).replace(/```/g, "\\`\\`\\`");
-            return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\``, ephemeral: true };
+            return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\`` };
           }
         }
       }

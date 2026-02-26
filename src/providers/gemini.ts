@@ -47,7 +47,7 @@ export class GeminiProvider implements Provider {
         const p = msg.parameters || {};
         switch (msg.tool_name) {
           case "shell": case "run_shell_command":
-            return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${(p.command || "").slice(0, 200)}\n\`\`\``, ephemeral: true };
+            return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${(p.command || "").slice(0, 200)}\n\`\`\`` };
           case "read_file":
             return { type: "text_chunk", text: `> {{p_read}} \`${p.file_path || ""}\``, ephemeral: true };
           case "edit_file": case "write_file":
@@ -64,7 +64,7 @@ export class GeminiProvider implements Provider {
       // Tool result: {"type":"tool_result","status":"...","output":"..."}
       if (msg.type === "tool_result" && msg.output) {
         const safe = String(msg.output).slice(0, 500).replace(/```/g, "\\`\\`\\`");
-        return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\``, ephemeral: true };
+        return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\`` };
       }
 
       // Error event
