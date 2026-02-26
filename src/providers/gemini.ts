@@ -47,24 +47,24 @@ export class GeminiProvider implements Provider {
         const p = msg.parameters || {};
         switch (msg.tool_name) {
           case "shell": case "run_shell_command":
-            return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${(p.command || "").slice(0, 200)}\n\`\`\`` };
+            return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${(p.command || "").slice(0, 200)}\n\`\`\``, ephemeral: true };
           case "read_file":
-            return { type: "text_chunk", text: `> {{p_read}} \`${p.file_path || ""}\`` };
+            return { type: "text_chunk", text: `> {{p_read}} \`${p.file_path || ""}\``, ephemeral: true };
           case "edit_file": case "write_file":
-            return { type: "text_chunk", text: `> {{p_edit}} \`${p.file_path || ""}\`` };
+            return { type: "text_chunk", text: `> {{p_edit}} \`${p.file_path || ""}\``, ephemeral: true };
           case "find_files": case "glob":
-            return { type: "text_chunk", text: `> {{p_search}} \`${p.pattern || p.file_path || ""}\`` };
+            return { type: "text_chunk", text: `> {{p_search}} \`${p.pattern || p.file_path || ""}\``, ephemeral: true };
           case "grep": case "search_files":
-            return { type: "text_chunk", text: `> {{p_search}} grep \`${p.pattern || p.query || ""}\`` };
+            return { type: "text_chunk", text: `> {{p_search}} grep \`${p.pattern || p.query || ""}\``, ephemeral: true };
           default:
-            return { type: "text_chunk", text: `> {{p_tool}} ${msg.tool_name}` };
+            return { type: "text_chunk", text: `> {{p_tool}} ${msg.tool_name}`, ephemeral: true };
         }
       }
 
       // Tool result: {"type":"tool_result","status":"...","output":"..."}
       if (msg.type === "tool_result" && msg.output) {
         const safe = String(msg.output).slice(0, 500).replace(/```/g, "\\`\\`\\`");
-        return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\`` };
+        return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\``, ephemeral: true };
       }
 
       // Error event

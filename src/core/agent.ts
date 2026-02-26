@@ -318,9 +318,7 @@ export class AgentEngine {
             case "text_chunk":
               if (event.text) {
                 const localized = event.text.replace(/\{\{(p_\w+)\}\}/g, (_, key) => t(this.config.locale, key));
-                const isEphemeral = localized.startsWith("> ");
-                if (isEphemeral) {
-                  // Ephemeral: reasoning/file_change — show in preview only, replace previous ephemeral
+                if (event.ephemeral) {
                   lastEphemeral = localized;
                   if (opts.onChunk) opts.onChunk(localized, fullText + localized + "\n");
                 } else {

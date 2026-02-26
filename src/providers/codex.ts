@@ -40,7 +40,7 @@ export class CodexProvider implements Provider {
             if (item.text) return { type: "text_chunk", text: item.text };
             break;
           case "reasoning":
-            if (item.text) return { type: "text_chunk", text: `> {{p_thinking}}: ${item.text.slice(0, 100)}` };
+            if (item.text) return { type: "text_chunk", text: `> {{p_thinking}}: ${item.text.slice(0, 100)}`, ephemeral: true };
             break;
           case "command_execution":
             if (item.command) {
@@ -49,7 +49,7 @@ export class CodexProvider implements Provider {
               const output = item.aggregated_output
                 ? "\n" + item.aggregated_output.slice(0, 500).replace(/```/g, "\\`\\`\\`")
                 : "";
-              return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${cmd}${exit}${output}\n\`\`\`` };
+              return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${cmd}${exit}${output}\n\`\`\``, ephemeral: true };
             }
             break;
           case "file_change":
@@ -57,20 +57,20 @@ export class CodexProvider implements Provider {
               const files = item.changes.map((c: any) =>
                 `> \`${c.kind === "add" ? "{{p_file_add}}" : "{{p_file_mod}}"}${c.path}\``
               ).join("\n");
-              return { type: "text_chunk", text: files };
+              return { type: "text_chunk", text: files, ephemeral: true };
             }
             break;
           case "todo_list":
             if (item.items?.length) {
               const list = item.items.map((t: any) => `${t.completed ? "[x]" : "[ ]"} ${t.text}`).join("\n");
-              return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\`` };
+              return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\``, ephemeral: true };
             }
             break;
         }
       }
       if (msg.type === "item.updated" && msg.item?.type === "todo_list" && msg.item.items?.length) {
         const list = msg.item.items.map((t: any) => `${t.completed ? "[x]" : "[ ]"} ${t.text}`).join("\n");
-        return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\`` };
+        return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\``, ephemeral: true };
       }
       if (msg.type === "turn.completed") {
         const usage = msg.usage || {};

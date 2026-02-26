@@ -360,7 +360,7 @@ export class TelegramAdapter extends AdapterBase {
         const placeholder = await this.reply(chatId, t(this.locale, "thinking"));
         const msgId = placeholder.message_id;
         let lastEdit = 0;
-        let editCount = 0;
+
 
         try {
           reqLog.info("running claude (multi-session)", { uid });
@@ -369,11 +369,10 @@ export class TelegramAdapter extends AdapterBase {
               const now = Date.now();
               if (now - lastEdit < EDIT_INTERVAL) return;
               lastEdit = now;
-              editCount++;
-              const dots = ".".repeat((editCount % 3) + 1);
+  
               const raw = full.length > 3500 ? full.slice(-3500) : full;
               const closed = closeCodeFences(raw);
-              const md = toTelegramMarkdown(closed) + "\n\n" + toTelegramMarkdown(dots);
+              const md = toTelegramMarkdown(closed);
               await this.editMsg(chatId, msgId, md, "MarkdownV2");
             }
           );
@@ -413,11 +412,10 @@ export class TelegramAdapter extends AdapterBase {
             const now = Date.now();
             if (now - lastEdit < EDIT_INTERVAL) return;
             lastEdit = now;
-            editCount++;
-            const dots = ".".repeat((editCount % 3) + 1);
+
             const raw = full.length > 3500 ? full.slice(-3500) : full;
             const closed = closeCodeFences(raw);
-            const md = toTelegramMarkdown(closed) + "\n\n" + toTelegramMarkdown(dots);
+            const md = toTelegramMarkdown(closed);
             await this.editMsg(chatId, msgId, md, "MarkdownV2");
           }
         );

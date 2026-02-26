@@ -30,8 +30,9 @@ export class ClaudeProvider implements Provider {
       }
       if (msg.type === "assistant" && msg.message?.content) {
         const parts: string[] = [];
+        let hasText = false;
         for (const b of msg.message.content) {
-          if (b.type === "text" && b.text) parts.push(b.text);
+          if (b.type === "text" && b.text) { parts.push(b.text); hasText = true; }
           if (b.type === "tool_use" && b.name) {
             const inp = b.input || {};
             switch (b.name) {
@@ -58,13 +59,13 @@ export class ClaudeProvider implements Provider {
             }
           }
         }
-        if (parts.length) return { type: "text_chunk", text: parts.join("\n") };
+        if (parts.length) return { type: "text_chunk", text: parts.join("\n"), ephemeral: !hasText };
       }
       if (msg.type === "user" && msg.message?.content) {
         for (const b of msg.message.content) {
           if (b.type === "tool_result" && typeof b.content === "string" && b.content.length > 0) {
             const safe = b.content.slice(0, 500).replace(/```/g, "\\`\\`\\`");
-            return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\`` };
+            return { type: "text_chunk", text: `\`\`\`\n${safe}\n\`\`\``, ephemeral: true };
           }
         }
       }
