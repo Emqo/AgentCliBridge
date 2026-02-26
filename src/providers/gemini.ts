@@ -49,15 +49,15 @@ export class GeminiProvider implements Provider {
           case "shell": case "run_shell_command":
             return { type: "text_chunk", text: `\`\`\`\n{{p_cmd}}${(p.command || "").slice(0, 200)}\n\`\`\`` };
           case "read_file":
-            return { type: "text_chunk", text: `> {{p_read}} \`${p.file_path || ""}\``, ephemeral: true };
+            return { type: "text_chunk", text: `> {{p_read}} \`${p.file_path || ""}\`` };
           case "edit_file": case "write_file":
-            return { type: "text_chunk", text: `> {{p_edit}} \`${p.file_path || ""}\``, ephemeral: true };
+            return { type: "text_chunk", text: `> {{p_edit}} \`${p.file_path || ""}\`` };
           case "find_files": case "glob":
-            return { type: "text_chunk", text: `> {{p_search}} \`${p.pattern || p.file_path || ""}\``, ephemeral: true };
+            return { type: "text_chunk", text: `> {{p_search}} \`${p.pattern || p.file_path || ""}\`` };
           case "grep": case "search_files":
-            return { type: "text_chunk", text: `> {{p_search}} grep \`${p.pattern || p.query || ""}\``, ephemeral: true };
+            return { type: "text_chunk", text: `> {{p_search}} grep \`${p.pattern || p.query || ""}\`` };
           default:
-            return { type: "text_chunk", text: `> {{p_tool}} ${msg.tool_name}`, ephemeral: true };
+            return { type: "text_chunk", text: `> {{p_tool}} ${msg.tool_name}` };
         }
       }
 

@@ -300,7 +300,6 @@ export class AgentEngine {
       let sessionId = opts.resumeSessionId || "";
       let cost = 0;
       let buffer = "";
-      let lastEphemeral = "";
 
       child.stdout!.on("data", (data: Buffer) => {
         const chunk = data.toString();
@@ -318,14 +317,8 @@ export class AgentEngine {
             case "text_chunk":
               if (event.text) {
                 const localized = event.text.replace(/\{\{(p_\w+)\}\}/g, (_, key) => t(this.config.locale, key));
-                if (event.ephemeral) {
-                  lastEphemeral = localized;
-                  if (opts.onChunk) opts.onChunk(localized, fullText + localized + "\n");
-                } else {
-                  lastEphemeral = "";
-                  fullText += localized + "\n";
-                  if (opts.onChunk) opts.onChunk(localized, fullText);
-                }
+                fullText += localized + "\n";
+                if (opts.onChunk) opts.onChunk(localized, fullText);
               }
               break;
             case "result":

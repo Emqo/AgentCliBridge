@@ -4,7 +4,6 @@ export interface ProviderStreamEvent {
   text?: string;
   cost?: number;
   isError?: boolean;
-  ephemeral?: boolean;
 }
 
 export interface ProviderExecOpts {

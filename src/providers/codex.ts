@@ -40,7 +40,7 @@ export class CodexProvider implements Provider {
             if (item.text) return { type: "text_chunk", text: item.text };
             break;
           case "reasoning":
-            if (item.text) return { type: "text_chunk", text: `> {{p_thinking}}: ${item.text.slice(0, 100)}`, ephemeral: true };
+            if (item.text) return { type: "text_chunk", text: `> {{p_thinking}}: ${item.text.slice(0, 100)}` };
             break;
           case "command_execution":
             if (item.command) {
@@ -57,20 +57,20 @@ export class CodexProvider implements Provider {
               const files = item.changes.map((c: any) =>
                 `> \`${c.kind === "add" ? "{{p_file_add}}" : "{{p_file_mod}}"}${c.path}\``
               ).join("\n");
-              return { type: "text_chunk", text: files, ephemeral: true };
+              return { type: "text_chunk", text: files };
             }
             break;
           case "todo_list":
             if (item.items?.length) {
               const list = item.items.map((t: any) => `${t.completed ? "[x]" : "[ ]"} ${t.text}`).join("\n");
-              return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\``, ephemeral: true };
+              return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\`` };
             }
             break;
         }
       }
       if (msg.type === "item.updated" && msg.item?.type === "todo_list" && msg.item.items?.length) {
         const list = msg.item.items.map((t: any) => `${t.completed ? "[x]" : "[ ]"} ${t.text}`).join("\n");
-        return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\``, ephemeral: true };
+        return { type: "text_chunk", text: `\`\`\`\n${list}\n\`\`\`` };
       }
       if (msg.type === "turn.completed") {
         const usage = msg.usage || {};
